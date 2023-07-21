@@ -68,7 +68,7 @@ def merge_workspaces(project_url, workspace, **args):
     cursor = None
     print("Reading Project", end="")
     while True:
-        res = gh_query(gh_proj_items, dict(login="pretagov", number=3, cursor=cursor))[
+        res = gh_query(gh_proj_items, dict(login="pretagov", number=int(proj_num), cursor=cursor))[
             "organization"
         ]["projectV2"]["items"]
         items.extend(res["nodes"])
@@ -92,7 +92,7 @@ def merge_workspaces(project_url, workspace, **args):
         for w in workspace
         if not any(fnmatch.fnmatch(w, pat) for pat in args["exclude_workspace"])
     ]
-    if args["workspace_field"] not in fields:
+    if args["workspace_field"] and args["workspace_field"] not in fields:
         # grey = gh_query.__self__.schema.type_map['ProjectV2SingleSelectFieldOptionColor'].values['GRAY']
         options = [
             dict(fuzzy_get(workspaces, name), description="", color="GRAY") for name in workspace
@@ -126,10 +126,10 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
     ]
 
     # Get proj states
-    status_field = fields["Status"]
     estimate_field = fields.get(args["estimate_field"])
     priority_field = fields.get(args["priority_field"])
     workspace_field = fields.get(args["workspace_field"])
+    status_field = fields["Status"]
     options = {opt["name"]: opt for opt in status_field["options"]}
 
     for pos, pipeline in enumerate(ws["pipelines"]):

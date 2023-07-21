@@ -1,6 +1,6 @@
 # Projects Migrator
 
-Migrates/Syncs one or more ZenHub workspaces to a Github Project
+Migrates one or more ZenHub workspaces to a Github Project
 
 Usage:
 
@@ -11,7 +11,6 @@ python projectsmigrator.py https://github.com/orgs/myorg/myproj/1 --workspace="W
 # Details
 
 The project must be a ProjectV2 and must already exist.
-- Create the Status you want
 
 To see all the options look at https://raw.githubusercontent.com/pretagov/projectsmigrator/main/projectsmigrator.py
 or run 
@@ -20,14 +19,6 @@ or run
 python projectsmigrator.py --help
 ```
 
-## Authentication
-
-You will need access to both the Zenhub graphql api and Github graphql api.
-Once you have got auth tokens for both you can either 
-- put them environment variables ```ZENHUB_TOKEN``` and ```GITHUB_TOKEN```
-- use ```--zenhub-token=<token>``` and ```--github-token=<token>``` command line options
-
-- TODO: Required token permissions
 
 ## Columns/Status
 The columns/status won't be added automatically but instead
@@ -106,6 +97,16 @@ size option, and the rest are mapped proportionally.
 NOTE: currently we haven't worked out how to read the options for estimate from zenhub so it assumes the default storypoints.
 if the value doesn't match one of those then it will pick the closest story point.
 
+
+## Authentication
+
+You will need access to both the Zenhub graphql api and Github graphql api.
+Once you have got auth tokens for both you can either 
+- put them environment variables ```ZENHUB_TOKEN``` and ```GITHUB_TOKEN```
+- use ```--zenhub-token=<token>``` and ```--github-token=<token>``` command line options
+
+- TODO: Required token permissions
+  
 # TODO
 
 - [ ] Sprints - as a text field?
@@ -117,4 +118,5 @@ if the value doesn't match one of those then it will pick the closest story poin
 - [ ] Handle zenhub only epics and issues
 - [ ] Optionally support Epics/blocking as a fields instead of checklists
 
-
+# Credits
+- PretaGov UK/AU https://pretagov.com

@@ -13,7 +13,7 @@ Options:
   --workspace-field=<name>       Github field name to put workspace name in. Empty means skip.
   --disable-blocking-checklist   Don't edit issue to add a checklist of blocking issues.
   --disable-epic-checklist       Don't edit epic issue to add a checklist of subitems.
-  --disable-pr-fixes             Don't edit linked PR to add "fixes #??".
+  --disable-pr-link              Don't edit linked PR to add "fixes #??".
   --disable-remove               Project items not found in any of the workspace won't be removed.
   --github-token=<token>         or use env var GITHUB_TOKEN.
   --zenhub-token=<token>         or use env var ZENHUB_TOKEN.
@@ -68,18 +68,18 @@ def merge_workspaces(project_url, workspace, **args):
     workspace = [w for w in workspace if not any(fnmatch.fnmatch(w, pat) for pat in args['exclude_workspace'])]
     if args['workspace_field'] not in fields:
         # grey = gh_query.__self__.schema.type_map['ProjectV2SingleSelectFieldOptionColor'].values['GRAY']
-        options = [dict(fuzzy_dict(workspaces, name), description="", color="GRAY") for name in workspace]
+        options = [dict(fuzzy_get(workspaces, name), description="", color="GRAY") for name in workspace]
         field = gh_query(gh_add_field, dict(name="Workspace", proj=proj['id'], options=options))
         fields['Workspace'] = field
         # TODO: add in missing options
     
     seen = {}
     for name in workspace:
-        ws = fuzzy_dict(workspaces, name)
+        ws = fuzzy_get(workspaces, name)
         sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args)
 
     # get list of all items in the current project so we can remove ones added by mistake if desired.
-    if "disable-remove" not in args:
+    if not args["disable_remove"]:
         print(f"Not in any workspace")
         all_items = set((r, i.get('content',{}).get('title'), i['id']) for r, i in items.items())
         added_items = set((r, i.get('content',{}).get('title'), i['id']) for r, i in seen.items())
@@ -108,7 +108,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
 
         # add state if we don't have it. # TODO. no api for this yet. Have to create the whole field
         # for now we will just pick closest match
-        status = fuzzy_dict(options, pipeline['name'])
+        status = fuzzy_get(options, pipeline['name'])
         print(f"Merging {ws['name']}/{pipeline['name']} -> {proj['title']}/{status['name']}")
         last = None
         for issue in issues:
@@ -162,7 +162,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
 
             # set priority
             if issue['pipelineIssue']['priority'] and priority_field is not None:
-                priority = fuzzy_dict({opt['name']:opt for opt in priority_field['options']}, issue['pipelineIssue']['priority']['name'])
+                priority = fuzzy_get({opt['name']:opt for opt in priority_field['options']}, issue['pipelineIssue']['priority']['name'])
                 changes += ["PRI*"] if set_field(proj, item, priority_field, priority['id'], gh_query) else ["PRI"]                    
                 
             # set estimate
@@ -184,6 +184,9 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
 
             # TODO: hacky way to get get linked PR. but can't see another way yet
             for hist in [hist['data'] for hist in issue['timelineItems']['nodes'] if 'issue.connect_issue_to_pr' in hist['type']]:
+                if args['disable_pr_link']:
+                    continue
+
                 pr = gh_query(gh_get_pr, 
                         dict(
                             number=hist['pull_request']['number'], 
@@ -211,7 +214,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                     
             # if epic, put in checklist
             # TODO: we don't reproduce closed epics. Possibly find tickets that are part of epics and go change the closed ones?
-            if issue['id'] in epics:
+            if issue['id'] in epics and not args['disable_epic_checklist']:
                 text += "\n## Epic\n"
                 epic = epics[issue['id']]
                 for subissue in zh_query(zh_epic_issues, dict(zenhubEpicId=epic['id'], workspaceId=ws['id']))['node']['childIssues']['nodes']:
@@ -219,7 +222,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 
             # TODO: if blocking, put in checklist - in hist as 'issue.add_blocked_issue'
             blocked = {i['blockingIssue']['id']:i['blockingIssue'] for i in deps if i['blockedIssue']['id'] == issue['id']}
-            if blocked:
+            if blocked and not args['disable_blocking_checklist']:
               text = "\n## Blocked by\n"
               for sub in blocked.values():
                     text += f"- [ ] {sub['htmlUrl']}\n"
@@ -253,11 +256,11 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
             print(f"- '{issue['repository']['name']}':'{issue['title']}' - {', '.join(changes)}")
 
 
-def fuzzy_dict(dct, key):
+def fuzzy_get(dct, key):
     """ 
     return the value whose key is the closest
     
-      >>> fuzzy_dict({"foo":1, "bah":2}, "fo")
+      >>> fuzzy_get({"foo":1, "bah":2}, "fo")
       1
     """
     closest = next(iter(difflib.get_close_matches(key, dct.keys(), 1, 0)))

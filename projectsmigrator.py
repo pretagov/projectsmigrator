@@ -33,9 +33,11 @@ def merge_workspaces(project_url, workspace, **args):
 
     # Create a GraphQL client using the defined transport
     token = os.environ['ZENHUB_TOKEN'] if not args['zenhub_token'] else args['zenhub_token']
-    zh_query = Client(transport=AIOHTTPTransport(url="https://api.zenhub.com/public/graphql", headers={"Authorization": f"Bearer {token}"}, timeout=60), fetch_schema_from_transport=True,serialize_variables=True).execute
+    zh_query = Client(transport=AIOHTTPTransport(url="https://api.zenhub.com/public/graphql", headers={
+                      "Authorization": f"Bearer {token}"}, timeout=60), fetch_schema_from_transport=True, serialize_variables=True).execute
     token = os.environ['GITHUB_TOKEN'] if not args['github_token'] else args['github_token']
-    gh_query = Client(transport=AIOHTTPTransport(url="https://api.github.com/graphql", headers={"Authorization": f"Bearer {token}"}, timeout=60), fetch_schema_from_transport=False,serialize_variables=True).execute
+    gh_query = Client(transport=AIOHTTPTransport(url="https://api.github.com/graphql", headers={
+                      "Authorization": f"Bearer {token}"}, timeout=60), fetch_schema_from_transport=False, serialize_variables=True).execute
 
     org_name = project_url.split("orgs/")[1].split("/")[0]
     proj_num = project_url.split("projects/")[1].split("/")[0]
@@ -43,14 +45,16 @@ def merge_workspaces(project_url, workspace, **args):
     # owner = gh_query(gh_user)['viewer']
     org = gh_query(gh_org, dict(login=org_name, number=int(proj_num)))
     proj = org['organization']['projectV2']
-    fields = {f['name']: f for f in gh_query(gh_get_Fields, dict(proj=proj['id']))['node']['fields']['nodes']}
+    fields = {f['name']: f for f in gh_query(gh_get_Fields, dict(proj=proj['id']))[
+        'node']['fields']['nodes']}
 
     # Get all the items so we can speed up queries and reduce updates
     items = []
     cursor = None
     print("Reading Project", end="")
     while True:
-        res = gh_query(gh_proj_items, dict(login='pretagov', number=3, cursor=cursor))['organization']['projectV2']['items']
+        res = gh_query(gh_proj_items, dict(login='pretagov', number=3, cursor=cursor))[
+            'organization']['projectV2']['items']
         items.extend(res['nodes'])
         print(".", end="")
         if not res['pageInfo']['hasNextPage']:
@@ -62,45 +66,55 @@ def merge_workspaces(project_url, workspace, **args):
         next['after'] = i
     items = {issue_key(item['content']): item for item in items}
 
-    workspaces = {ws['name']: ws for ws in zh_query(zh_workspaces)['recentlyViewedWorkspaces']['nodes']}
+    workspaces = {ws['name']: ws for ws in zh_query(
+        zh_workspaces)['recentlyViewedWorkspaces']['nodes']}
     if not workspace:
         workspace = list(workspaces.keys())
-    workspace = [w for w in workspace if not any(fnmatch.fnmatch(w, pat) for pat in args['exclude_workspace'])]
+    workspace = [w for w in workspace if not any(
+        fnmatch.fnmatch(w, pat) for pat in args['exclude_workspace'])]
     if args['workspace_field'] not in fields:
         # grey = gh_query.__self__.schema.type_map['ProjectV2SingleSelectFieldOptionColor'].values['GRAY']
-        options = [dict(fuzzy_get(workspaces, name), description="", color="GRAY") for name in workspace]
-        field = gh_query(gh_add_field, dict(name="Workspace", proj=proj['id'], options=options))
+        options = [dict(fuzzy_get(workspaces, name),
+                        description="", color="GRAY") for name in workspace]
+        field = gh_query(gh_add_field, dict(
+            name="Workspace", proj=proj['id'], options=options))
         fields['Workspace'] = field
         # TODO: add in missing options
-    
+
     seen = {}
     for name in workspace:
         ws = fuzzy_get(workspaces, name)
-        sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args)
+        sync_workspace(ws, proj, fields, items, seen,
+                       zh_query, gh_query, **args)
 
     # get list of all items in the current project so we can remove ones added by mistake if desired.
     if not args["disable_remove"]:
         print(f"Not in any workspace")
-        all_items = set((r, i.get('content',{}).get('title'), i['id']) for r, i in items.items())
-        added_items = set((r, i.get('content',{}).get('title'), i['id']) for r, i in seen.items())
+        all_items = set((r, i.get('content', {}).get('title'),
+                        i['id']) for r, i in items.items())
+        added_items = set((r, i.get('content', {}).get(
+            'title'), i['id']) for r, i in seen.items())
         for repo, name, item in all_items - added_items:
             gh_query(gh_del_item, dict(proj=proj['id'], issue=item))
             print(f"- '{repo[0]}':'{name}' - REMOVED")
 
 
 def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
-    epics = {e['issue']['id']:e for e in zh_query(zh_get_epics, dict(workspaceId=ws['id']))['workspace']['epics']['nodes']}
-    deps = zh_query(zh_get_dep, dict(workspaceId=ws['id']))['workspace']['issueDependencies']['nodes']
+    epics = {e['issue']['id']: e for e in zh_query(zh_get_epics, dict(
+        workspaceId=ws['id']))['workspace']['epics']['nodes']}
+    deps = zh_query(zh_get_dep, dict(workspaceId=ws['id']))[
+        'workspace']['issueDependencies']['nodes']
 
     # Get proj states
     status_field = fields['Status']
     estimate_field = fields.get(args['estimate_field'])
     priority_field = fields.get(args['priority_field'])
     workspace_field = fields.get(args['workspace_field'])
-    options = {opt['name']:opt for opt in status_field['options']}
+    options = {opt['name']: opt for opt in status_field['options']}
 
     for pos, pipeline in enumerate(ws['pipelines']):
-        issues = zh_query(zh_issues, dict(pipelineId=pipeline['id'], filters={}, workspaceId=ws['id']))['searchIssuesByPipeline']['nodes']
+        issues = zh_query(zh_issues, dict(pipelineId=pipeline['id'], filters={
+        }, workspaceId=ws['id']))['searchIssuesByPipeline']['nodes']
 
         if any(fnmatch.fnmatch(pipeline['name'], drop_col) for drop_col in args['exclude_pipeline']):
             print(f"Excluding Pipeline '{ws['name']}/{pipeline['name']}'")
@@ -109,7 +123,8 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
         # add state if we don't have it. # TODO. no api for this yet. Have to create the whole field
         # for now we will just pick closest match
         status = fuzzy_get(options, pipeline['name'])
-        print(f"Merging {ws['name']}/{pipeline['name']} -> {proj['title']}/{status['name']}")
+        print(
+            f"Merging {ws['name']}/{pipeline['name']} -> {proj['title']}/{status['name']}")
         last = None
         for issue in issues:
             changes = []
@@ -118,33 +133,37 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 item = items[key]
                 gh_issue = item['content']
             else:
-                gh_issue = gh_query(gh_get_issue, 
-                                dict(
-                                    number=issue['number'], 
-                                    repo=issue['repository']['name'], 
-                                    owner=issue['repository']['owner']['login']
+                gh_issue = gh_query(gh_get_issue,
+                                    dict(
+                                        number=issue['number'],
+                                        repo=issue['repository']['name'],
+                                        owner=issue['repository']['owner']['login']
                                     )
-                                )['repository']['issueOrPullRequest']
+                                    )['repository']['issueOrPullRequest']
                 item = None
 
             if gh_issue['repository']['archivedAt'] is not None:
                 # handle if the issue is in archived repo
-                print(f"- '{issue['repository']['name']}':'{issue['title']}' - Archived Repo - SKIP")
+                print(
+                    f"- '{issue['repository']['name']}':'{issue['title']}' - Archived Repo - SKIP")
                 continue
             elif item is None:
                 # add issue if not there
-                item = gh_query(gh_add_item, dict(proj=proj['id'], issue=gh_issue['id']))['addProjectV2ItemById']['item']
+                item = gh_query(gh_add_item, dict(proj=proj['id'], issue=gh_issue['id']))[
+                    'addProjectV2ItemById']['item']
                 items['key'] = item
                 changes += ["ADD*"]
             if key in seen:
-                print(f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP")
+                print(
+                    f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP")
                 continue
             else:
                 seen[key] = item
-            
+
             # set column/status
             if status_field is not None:
-                changes += ["COL*"] if set_field(proj, item, status_field, status['id'], gh_query) else []                    
+                changes += ["COL*"] if set_field(proj, item,
+                                                 status_field, status['id'], gh_query) else []
 
             # set order/position
             if last is None:
@@ -153,47 +172,56 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 changes += []
             else:
                 try:
-                    gh_query(gh_set_order, dict(proj=proj['id'], item=item['id'], after=last['id']))
+                    gh_query(gh_set_order, dict(
+                        proj=proj['id'], item=item['id'], after=last['id']))
                 except transport.exceptions.TransportQueryError as e:
-                    changes += [f"POS({e})"]  # TODO: work out why error happened
+                    # TODO: work out why error happened
+                    changes += [f"POS({e})"]
                 else:
                     changes += ["POS*"]
             last = item
 
             # set priority
             if issue['pipelineIssue']['priority'] and priority_field is not None:
-                priority = fuzzy_get({opt['name']:opt for opt in priority_field['options']}, issue['pipelineIssue']['priority']['name'])
-                changes += ["PRI*"] if set_field(proj, item, priority_field, priority['id'], gh_query) else ["PRI"]                    
-                
+                priority = fuzzy_get(
+                    {opt['name']: opt for opt in priority_field['options']}, issue['pipelineIssue']['priority']['name'])
+                changes += ["PRI*"] if set_field(
+                    proj, item, priority_field, priority['id'], gh_query) else ["PRI"]
+
             # set estimate
             if issue['estimate'] and estimate_field is not None:
                 # 8 steps
                 story_points = [40, 21, 13, 8, 5, 3, 2, 1]
                 # TODO: if another scale we just pick closest number. Should get scale from zenhub but how?
-                pos = min(range(len(story_points)), key = lambda i: abs(story_points[i] - issue['estimate']['value']))
-                size = estimate_field['options'][round(pos/len(story_points) * len(estimate_field['options']))]
-                changes += ["EST*"] if set_field(proj, item, estimate_field, size['id'],gh_query) else ["EST"]                    
+                pos = min(range(len(story_points)), key=lambda i: abs(
+                    story_points[i] - issue['estimate']['value']))
+                size = estimate_field['options'][round(
+                    pos/len(story_points) * len(estimate_field['options']))]
+                changes += ["EST*"] if set_field(
+                    proj, item, estimate_field, size['id'], gh_query) else ["EST"]
 
             # put in original workspace name as custom field
             # - we can always get rid of it later
             # - we can automate setting it later based on repo
             # - allows us to set client on external issues
             if workspace_field is not None:
-                value = next((f['id'] for f in workspace_field['options'] if f['name'] == ws['name']), None)
-                changes += ["WS*"] if set_field(proj, item, workspace_field, value, gh_query) else []                    
+                value = next(
+                    (f['id'] for f in workspace_field['options'] if f['name'] == ws['name']), None)
+                changes += ["WS*"] if set_field(proj, item,
+                                                workspace_field, value, gh_query) else []
 
             # TODO: hacky way to get get linked PR. but can't see another way yet
             for hist in [hist['data'] for hist in issue['timelineItems']['nodes'] if 'issue.connect_issue_to_pr' in hist['type']]:
                 if args['disable_pr_link']:
                     continue
 
-                pr = gh_query(gh_get_pr, 
-                        dict(
-                            number=hist['pull_request']['number'], 
-                            repo=hist['pull_request_repository']['name'], 
-                            owner=hist['pull_request_organization']['login']
-                            )
-                        )['repository']['pullRequest']
+                pr = gh_query(gh_get_pr,
+                              dict(
+                                  number=hist['pull_request']['number'],
+                                  repo=hist['pull_request_repository']['name'],
+                                  owner=hist['pull_request_organization']['login']
+                              )
+                              )['repository']['pullRequest']
                 if hist['pull_request_organization']['login'] != proj['owner']['login']:
                     # Let's skip modifying others PR's
                     print(f"- SKIP PR update on '{pr['title']}'")
@@ -202,7 +230,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 fixes = f"fixes {shorturl(gh_issue['url'])}"
                 if fixes not in pr['body']:
                     newbody = pr['body'] + f"\r\n {fixes}"
-                    gh_query(gh_setpr_body, dict(id=pr['id'], body=newbody))    
+                    gh_query(gh_setpr_body, dict(id=pr['id'], body=newbody))
                     changes += ["PR*"]
                 else:
                     changes += ["PR"]
@@ -211,7 +239,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
             # TODO: there is special linked PR field but can't set it? https://github.com/orgs/community/discussions/40860
             # seems like it only lets you create a branch, not link a PR? do via discussion? or work out how UI lets you set it?
             # gh_query(gh_set_value, dict(proj=proj, item=item['id'], field=fields['Linked pull requests']['id'], value=pr['url']))
-                    
+
             # if epic, put in checklist
             # TODO: we don't reproduce closed epics. Possibly find tickets that are part of epics and go change the closed ones?
             if issue['id'] in epics and not args['disable_epic_checklist']:
@@ -219,12 +247,13 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 epic = epics[issue['id']]
                 for subissue in zh_query(zh_epic_issues, dict(zenhubEpicId=epic['id'], workspaceId=ws['id']))['node']['childIssues']['nodes']:
                     text += f"- [ ] {subissue['htmlUrl']}\n"
-                
+
             # TODO: if blocking, put in checklist - in hist as 'issue.add_blocked_issue'
-            blocked = {i['blockingIssue']['id']:i['blockingIssue'] for i in deps if i['blockedIssue']['id'] == issue['id']}
+            blocked = {i['blockingIssue']['id']: i['blockingIssue']
+                       for i in deps if i['blockedIssue']['id'] == issue['id']}
             if blocked and not args['disable_blocking_checklist']:
-              text = "\n## Blocked by\n"
-              for sub in blocked.values():
+                text = "\n## Blocked by\n"
+                for sub in blocked.values():
                     text += f"- [ ] {sub['htmlUrl']}\n"
             # We won't include blocking since then we have the information in two places. More important to show what we block
             # also what is blocking us could be externa issue
@@ -236,7 +265,8 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
             if text and gh_issue['repository']['owner']['login'] != proj['owner']['login']:
                 print(f"- SKIP dep update on '{issue['title']}'")
             elif text:
-                body, *rest = gh_issue['body'].split("\r\n# Dependencies\r\n", 1)
+                body, * \
+                    rest = gh_issue['body'].split("\r\n# Dependencies\r\n", 1)
                 rest = "" if not rest else rest[0]
                 if "\n# " in rest:
                     rest = rest[rest.find("\r\n# "):]
@@ -245,21 +275,22 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 text = ("\n# Dependencies\n" + text).replace("\n", "\r\n")
                 newbody = body + text + rest
                 if gh_issue['body'] != newbody:
-                    gh_query(gh_set_body, dict(id=gh_issue['id'], body=newbody))    
+                    gh_query(gh_set_body, dict(
+                        id=gh_issue['id'], body=newbody))
                     changes += ["DEP*"]
                 else:
                     changes += ["DEP"]
 
-
             # TODO: can we reproduce the history?
 
-            print(f"- '{issue['repository']['name']}':'{issue['title']}' - {', '.join(changes)}")
+            print(
+                f"- '{issue['repository']['name']}':'{issue['title']}' - {', '.join(changes)}")
 
 
 def fuzzy_get(dct, key):
     """ 
     return the value whose key is the closest
-    
+
       >>> fuzzy_get({"foo":1, "bah":2}, "fo")
       1
     """
@@ -268,16 +299,18 @@ def fuzzy_get(dct, key):
 
 
 def field_value(item, field):
-    return next((n.get('optionId',n.get('text')) for n in item['fieldValues']['nodes'] if n and n['field']['id'] == field['id']), None)
+    return next((n.get('optionId', n.get('text')) for n in item['fieldValues']['nodes'] if n and n['field']['id'] == field['id']), None)
 
 
 def set_field(proj, item, field, value, gh_query):
     if not field_value(item, field) == value:
         query = gh_set_option if 'options' in field else gh_set_value
         if value is None:
-            gh_query(gh_del_value, dict(proj=proj['id'], item=item['id'], field=field['id']))
+            gh_query(gh_del_value, dict(
+                proj=proj['id'], item=item['id'], field=field['id']))
         else:
-            gh_query(query, dict(proj=proj['id'], item=item['id'], field=field['id'], value=value))
+            gh_query(query, dict(
+                proj=proj['id'], item=item['id'], field=field['id'], value=value))
         return True
     else:
         return False
@@ -318,7 +351,6 @@ query RecentlyViewedWorkspaces {
     }
 }
 """)
-             
 
 
 zh_issues = gql("""
@@ -441,7 +473,6 @@ zh_get_dep = gql("""
 """)
 
 
-
 gh_add_column = gql("""
     mutation ($name: String!, $projectId: ID!) {
         addProjectColumn(input: {
@@ -499,7 +530,7 @@ gh_user = gql("""
 """)
 
 gh_org = gql(
-"""
+    """
   query($login:String!, $number:Int!) {
     organization(login:$login) {
       id
@@ -532,7 +563,7 @@ gh_org = gql(
 
 
 gh_proj_items = gql(
-"""
+    """
   query($login:String!, $number:Int!, $cursor:String) {
     organization(login:$login) {
       projectV2(number: $number) {
@@ -611,7 +642,7 @@ gh_del_item = gql("""
 
 
 gh_get_issue = gql(
-"""
+    """
 query($repo:String!, $owner:String!, $number:Int!) {
   repository(name:$repo, owner:$owner) {
       issueOrPullRequest(number: $number) {
@@ -641,7 +672,7 @@ query($repo:String!, $owner:String!, $number:Int!) {
 """)
 
 gh_get_pr = gql(
-"""
+    """
 query($repo:String!, $owner:String!, $number:Int!) {
   repository(name:$repo, owner:$owner) {
       pullRequest(number: $number) {
@@ -818,7 +849,7 @@ gh_set_order = gql("""
 """)
 
 
-
 if __name__ == "__main__":
-    args = {k.strip("<>-- ").replace("-", "_"): v for k, v in docopt(__doc__).items()}
+    args = {k.strip("<>-- ").replace("-", "_"): v for k,
+            v in docopt(__doc__).items()}
     merge_workspaces(**args)

@@ -214,15 +214,22 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
             for hist in [hist['data'] for hist in issue['timelineItems']['nodes'] if 'issue.connect_issue_to_pr' in hist['type']]:
                 if args['disable_pr_link']:
                     continue
+                powner, prepo, pnumber = hist['pull_request_organization']['login'], hist['pull_request_repository']['name'], hist['pull_request']['number']
+                # TODO: see if already linked in field_value(item, fields['Linked pull requests'])
+                value = field_value(item, fields['Linked pull requests'])
+                if value is not None:
+                    prurl = f"https://github.com/{powner}/{prepo}/pull/{pnumber}"
+                    if any(pr['url'] == prurl for pr in value['nodes']):
+                        # Already linked
+                        changes += ["PR"]
+                        continue      
 
                 pr = gh_query(gh_get_pr,
                               dict(
-                                  number=hist['pull_request']['number'],
-                                  repo=hist['pull_request_repository']['name'],
-                                  owner=hist['pull_request_organization']['login']
+                                  number=pnumber, repo=prepo, owner=powner
                               )
                               )['repository']['pullRequest']
-                if hist['pull_request_organization']['login'] != proj['owner']['login']:
+                if powner != proj['owner']['login']:
                     # Let's skip modifying others PR's
                     print(f"- SKIP PR update on '{pr['title']}'")
                     continue
@@ -299,7 +306,11 @@ def fuzzy_get(dct, key):
 
 
 def field_value(item, field):
-    return next((n.get('optionId', n.get('text')) for n in item['fieldValues']['nodes'] if n and n['field']['id'] == field['id']), None)
+    value = next((n for n in item['fieldValues']['nodes'] if n.get('field', {}).get('id') == field['id']), None)
+    if value is None:
+        return None
+    else:
+        return next(value[at] for at in ['text', 'number', 'pullRequests', 'optionId', 'users'] if at in value)
 
 
 def set_field(proj, item, field, value, gh_query):
@@ -598,6 +609,10 @@ gh_proj_items = gql(
                 ... on ProjectV2ItemFieldValueCommon { field {... on ProjectV2FieldCommon { id }} }
                 ... on ProjectV2ItemFieldSingleSelectValue { optionId  }
                 ... on ProjectV2ItemFieldTextValue { text  }
+                ... on ProjectV2ItemFieldUserValue { users(first:10) { nodes { login }} field {... on Node { id } } }
+                ... on ProjectV2ItemFieldNumberValue { number }
+                ... on ProjectV2ItemFieldPullRequestValue { pullRequests(first:10) { nodes { id url }} field {... on Node { id } } }
+                ... on ProjectV2ItemFieldDateValue { date }
               }
             }
             type

@@ -1,25 +1,23 @@
 """Projects Migrator: Sync Zenhub workspaces into a single Github Project
 
 Usage:
-  projectsmigrator.py <project_url> [--workspace=<name>]... [--exclude-workspace=<name>]... [--exclude-pipeline=<name>]... [options]
+  projectsmigrator.py <project_url> [--workspace=<name>]... [--exclude-workspace=<name>]... [--exclude-pipeline=<name>]... [--field=<src>:<dst>]... [options]
   projectsmigrator.py (-h | --help)
 
 Options:
-  -w=<name>, --workspace=<name>  Name of a Zenhub workspace or none means include all.
-  --exclude-workspace=<name>     Don't merge the matching Zenhub workspace name.
-  --exclude-pipeline=<name>      Exclude pipelines names that match pattern.
-  --estimate-field=<name>        Github field name to put estimates in [default: Size].
-  --priority-field=<name>        Github field name to put priority in [default: Priority].
-  --iteration-field=<name>       Github field name to put iteration in.
-  --status-field=<name>          Gitgub field name to put pipeline/column name in [default: Status]. 
-  --workspace-field=<name>       Github field name to put workspace name in. Empty means skip.
-  --disable-blocking-checklist   Don't edit issue to add a checklist of blocking issues.
-  --disable-epic-checklist       Don't edit epic issue to add a checklist of subitems.
-  --disable-pr-link              Don't edit linked PR to add "fixes #??".
-  --disable-remove               Project items not found in any of the workspace won't be removed.
-  --github-token=<token>         or use env var GITHUB_TOKEN.
-  --zenhub-token=<token>         or use env var ZENHUB_TOKEN.
-  -h, --help                     Show this screen.
+  -w=<name>, --workspace=<name>        Name of a Zenhub workspace or none means include all.
+  --exclude-workspace=<name>           Don't merge the matching Zenhub workspace name.
+  --exclude-pipeline=<name>            Exclude pipelines names that match pattern.
+  -f=<src>:<dst>, --field=<src>:<dst>  Transfer src field to dst field. "Text" as dst will add a checklist
+                                       for Epic and Blocking issues, and values into the text for other fields.
+                                       "<src>:" will disable the default.
+                                       [Default: Estimate:Size, Priority:Priority, Pipeline:Status,
+                                       PR:Text, Epic:Text, Blocking:Text]
+
+  --disable-remove                     Project items not found in any of the workspace won't be removed.
+  --github-token=<token>               or use env var GITHUB_TOKEN.
+  --zenhub-token=<token>               or use env var ZENHUB_TOKEN.
+  -h, --help                           Show this screen.
 
 """
 
@@ -30,8 +28,19 @@ from gql.transport.aiohttp import AIOHTTPTransport
 import os
 import fnmatch
 
+default_mapping = [
+    "Estimate:Size", 
+    "Priority:Priority", 
+    "Pipeline:Status",
+    "PR:Text", 
+    "Epic:Text", 
+    "Blocking:Text"
+]
 
-def merge_workspaces(project_url, workspace, **args):
+# Special field to signify putting into body text
+TEXT = {'type': 'body'}
+
+def merge_workspaces(project_url, workspace, field, **args):
     # Create a GraphQL client using the defined transport
     token = os.environ["ZENHUB_TOKEN"] if not args["zenhub_token"] else args["zenhub_token"]
     zh_query = Client(
@@ -60,11 +69,13 @@ def merge_workspaces(project_url, workspace, **args):
     # owner = gh_query(gh_user)['viewer']
     org = gh_query(gh_org, dict(login=org_name, number=int(proj_num)))
     proj = org["organization"]["projectV2"]
-    fields = {
+    all_fields = {
         f["name"]: f
         for f in gh_query(gh_get_Fields, dict(proj=proj["id"]))["node"]["fields"]["nodes"]
     }
 
+    # Get proj states
+  
     # Get all the items so we can speed up queries and reduce updates
     items = []
     cursor = None
@@ -94,14 +105,24 @@ def merge_workspaces(project_url, workspace, **args):
         for w in workspace
         if not any(fnmatch.fnmatch(w, pat) for pat in args["exclude_workspace"])
     ]
-    if args["workspace_field"] and args["workspace_field"] not in fields:
+
+    # Map src to tgt fields
+    fields = {}
+    all_fields['Text'] = TEXT
+    for mapping in args.get("field", default_mapping):
+        src, tgt = mapping.split(":") if ":" in mapping else (mapping, mapping)
+        fields[src] = all_fields.get(tgt)
+    fields['PR'] = all_fields["Linked pull requests"] if fields['PR'] == TEXT else fields['PR']
+
+    if "Workspace" in fields and fields['Workspace'] is None:
         # grey = gh_query.__self__.schema.type_map['ProjectV2SingleSelectFieldOptionColor'].values['GRAY']
         options = [
             dict(fuzzy_get(workspaces, name), description="", color="GRAY") for name in workspace
         ]
         field = gh_query(gh_add_field, dict(name="Workspace", proj=proj["id"], options=options))
-        fields["Workspace"] = field
+        field["Workspace"] = fields["Workspace"] = field
         # TODO: add in missing options
+
 
     seen = {}
     for name in workspace:
@@ -127,13 +148,12 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
         "nodes"
     ]
 
-    # Get proj states
-    estimate_field = fields.get(args["estimate_field"])
-    priority_field = fields.get(args["priority_field"])
-    workspace_field = fields.get(args["workspace_field"])
-    iteration_field = fields.get(args["iteration_field"])
-    status_field = fields.get(args["status_field"])
-    options = {opt["name"]: opt for opt in status_field["options"]}
+    # estimate_field = fields.get(args["estimate_field"])
+    # priority_field = fields.get(args["field['Priority']"])
+    # field['Workspace'] = fields.get(args["field['Workspace']"])
+    # field['Sprint'] = fields.get(args["field['Sprint']"])
+    # field['Pipeline'] = fields.get(args["field['Pipeline']"])
+    options = {opt["name"]: opt for opt in fields['Pipeline']["options"]}
 
     for pos, pipeline in enumerate(ws["pipelines"]):
         issues = zh_query(
@@ -188,9 +208,9 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 seen[key] = item
 
             # set column/status
-            if status_field is not None:
+            if fields.get('Pipeline') is not None:
                 changes += (
-                    ["COL*"] if set_field(proj, item, status_field, status["id"], gh_query) else []
+                    ["COL*"] if set_field(proj, item, fields['Pipeline'], status["id"], gh_query) else []
                 )
 
             # set order/position
@@ -211,20 +231,20 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
             last = item
 
             # set priority
-            if issue["pipelineIssue"]["priority"] and priority_field is not None:
+            if issue["pipelineIssue"]["priority"] and fields.get('Priority') is not None:
                 priority = fuzzy_get(
-                    {opt["name"]: opt for opt in priority_field["options"]},
+                    {opt["name"]: opt for opt in fields['Priority']["options"]},
                     issue["pipelineIssue"]["priority"]["name"],
                 )
                 changes += (
                     ["PRI*"]
-                    if set_field(proj, item, priority_field, priority["id"], gh_query)
+                    if set_field(proj, item, fields['Priority'], priority["id"], gh_query)
                     else ["PRI"]
                 )
 
             # set estimate
-            if issue["estimate"] and estimate_field is not None:
-                if "options" in estimate_field:
+            if issue["estimate"] and fields.get('Estimate') is not None:
+                if "options" in fields['Estimate']:
                     # 8 steps
                     story_points = [40, 21, 13, 8, 5, 3, 2, 1]
                     # TODO: if another scale we just pick closest number. Should get scale from zenhub but how?
@@ -232,14 +252,14 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                         range(len(story_points)),
                         key=lambda i: abs(story_points[i] - issue["estimate"]["value"]),
                     )
-                    size = estimate_field["options"][
-                        round(pos / len(story_points) * len(estimate_field["options"]))
+                    size = fields['Estimate']["options"][
+                        round(pos / len(story_points) * len(fields['Estimate']["options"]))
                     ]['id']
                 else:
                     size = int(issue["estimate"]['value'])
                 changes += (
                     ["EST*"]
-                    if set_field(proj, item, estimate_field, size, gh_query)
+                    if set_field(proj, item, fields['Estimate'], size, gh_query)
                     else ["EST"]
                 )
 
@@ -247,17 +267,17 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
             # - we can always get rid of it later
             # - we can automate setting it later based on repo
             # - allows us to set client on external issues
-            if workspace_field is not None:
+            if 'Workspace' in fields:
                 value = next(
-                    (f["id"] for f in workspace_field["options"] if f["name"] == ws["name"]), None
+                    (f["id"] for f in fields['Workspace']["options"] if f["name"] == ws["name"]), None
                 )
                 changes += (
-                    ["WS*"] if set_field(proj, item, workspace_field, value, gh_query) else []
+                    ["WS*"] if set_field(proj, item, fields['Workspace'], value, gh_query) else []
                 )
 
-            if issue["sprints"]['nodes'] and iteration_field is not None:
+            if issue["sprints"]['nodes'] and fields.get('Sprint') is not None:
                 changes += (
-                    ["IT*"] if set_field(proj, item, iteration_field, value, gh_query) else ["IT"]
+                    ["IT*"] if set_field(proj, item, fields['Sprint'], value, gh_query) else ["IT"]
                 )
 
             # TODO: hacky way to get get linked PR. but can't see another way yet
@@ -266,7 +286,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 for hist in issue["timelineItems"]["nodes"]
                 if "issue.connect_issue_to_pr" in hist["type"]
             ]:
-                if args["disable_pr_link"]:
+                if fields.get('PR') is not None:
                     continue
                 powner, prepo, pnumber = (
                     hist["pull_request_organization"]["login"],
@@ -274,7 +294,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                     hist["pull_request"]["number"],
                 )
                 # TODO: see if already linked in field_value(item, fields['Linked pull requests'])
-                value = field_value(item, fields["Linked pull requests"])
+                value = field_value(item, fields["PR"])
                 if value is not None:
                     prurl = f"https://github.com/{powner}/{prepo}/pull/{pnumber}"
                     if any(pr["url"] == prurl for pr in value["nodes"]):
@@ -305,7 +325,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
 
             # if epic, put in checklist
             # TODO: we don't reproduce closed epics. Possibly find tickets that are part of epics and go change the closed ones?
-            if issue["id"] in epics and not args["disable_epic_checklist"]:
+            if issue["id"] in epics and fields.get("Epic") == TEXT:
                 text += "\n## Epic\n"
                 epic = epics[issue["id"]]
                 for subissue in zh_query(
@@ -319,7 +339,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 for i in deps
                 if i["blockedIssue"]["id"] == issue["id"]
             }
-            if blocked and not args["disable_blocking_checklist"]:
+            if blocked and fields.get('Blocking') == TEXT:
                 text = "\n## Blocked by\n"
                 for sub in blocked.values():
                     text += f"- [ ] {sub['htmlUrl']}\n"

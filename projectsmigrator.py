@@ -1,19 +1,18 @@
 """Projects Migrator: Sync Zenhub workspaces into a single Github Project
 
 Usage:
-  projectsmigrator.py <project_url> [--workspace=<name>]... [--exclude-workspace=<name>]... [--exclude-pipeline=<name>]... [--field=<src>:<dst>]... [options]
+  projectsmigrator.py <project_url> [--workspace=<name>]... [--exclude=<name>:<pattern]... [--field=<src>:<dst>]... [options]
   projectsmigrator.py (-h | --help)
 
 Options:
-  -w=<name>, --workspace=<name>        Name of a Zenhub workspace or none means include all.
-  --exclude-workspace=<name>           Don't merge the matching Zenhub workspace name.
-  --exclude-pipeline=<name>            Exclude pipelines names that match pattern.
+  -w=<name>, --workspace=<name>        Name of a Zenhub workspace to import or none means include all.
   -f=<src>:<dst>, --field=<src>:<dst>  Transfer src field to dst field. "Text" as dst will add a checklist
                                        for Epic and Blocking issues, and values into the text for other fields.
                                        "<src>:" will disable the default.
                                        [Default: Estimate:Size, Priority:Priority, Pipeline:Status,
                                        PR:Text, Epic:Text, Blocking:Text]
-
+  --exclude=<src>:<pattern>            Don't include issues with field values that match the pattern
+                                       e.g. "Workspace:Private*", "Pipeline:Done".
   --disable-remove                     Project items not found in any of the workspace won't be removed.
   --github-token=<token>               or use env var GITHUB_TOKEN.
   --zenhub-token=<token>               or use env var ZENHUB_TOKEN.
@@ -95,6 +94,12 @@ def merge_workspaces(project_url, workspace, field, **args):
         next["after"] = i
     items = {issue_key(item["content"]): item for item in items}
 
+    # map excludes
+    exclude = {}
+    for f, pat in (m.split(":") for m in args['exclude']):
+        exclude.setdefault(f, []).append(pat)
+    del args['exclude']
+
     workspaces = {
         ws["name"]: ws for ws in zh_query(zh_workspaces)["recentlyViewedWorkspaces"]["nodes"]
     }
@@ -103,7 +108,7 @@ def merge_workspaces(project_url, workspace, field, **args):
     workspace = [
         w
         for w in workspace
-        if not any(fnmatch.fnmatch(w, pat) for pat in args["exclude_workspace"])
+        if not any(fnmatch.fnmatch(w, pat) for pat in exclude['Workspace'])
     ]
 
     # Map src to tgt fields
@@ -127,7 +132,7 @@ def merge_workspaces(project_url, workspace, field, **args):
     seen = {}
     for name in workspace:
         ws = fuzzy_get(workspaces, name)
-        sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args)
+        sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, **args)
 
     # get list of all items in the current project so we can remove ones added by mistake if desired.
     if not args["disable_remove"]:
@@ -139,7 +144,7 @@ def merge_workspaces(project_url, workspace, field, **args):
             print(f"- '{repo[0]}':'{name}' - REMOVED")
 
 
-def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
+def sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, **args):
     epics = {
         e["issue"]["id"]: e
         for e in zh_query(zh_get_epics, dict(workspaceId=ws["id"]))["workspace"]["epics"]["nodes"]
@@ -161,7 +166,7 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
         )["searchIssuesByPipeline"]["nodes"]
 
         if any(
-            fnmatch.fnmatch(pipeline["name"], drop_col) for drop_col in args["exclude_pipeline"]
+            fnmatch.fnmatch(pipeline["name"], drop_col) for drop_col in exclude['Pipeline']
         ):
             print(f"Excluding Pipeline '{ws['name']}/{pipeline['name']}'")
             continue

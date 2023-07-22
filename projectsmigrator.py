@@ -10,6 +10,8 @@ Options:
   --exclude-pipeline=<name>      Exclude pipelines names that match pattern.
   --estimate-field=<name>        Github field name to put estimates in [default: Size].
   --priority-field=<name>        Github field name to put priority in [default: Priority].
+  --iteration-field=<name>       Github field name to put iteration in.
+  --status-field=<name>          Gitgub field name to put pipeline/column name in [default: Status]. 
   --workspace-field=<name>       Github field name to put workspace name in. Empty means skip.
   --disable-blocking-checklist   Don't edit issue to add a checklist of blocking issues.
   --disable-epic-checklist       Don't edit epic issue to add a checklist of subitems.
@@ -129,7 +131,8 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
     estimate_field = fields.get(args["estimate_field"])
     priority_field = fields.get(args["priority_field"])
     workspace_field = fields.get(args["workspace_field"])
-    status_field = fields["Status"]
+    iteration_field = fields.get(args["iteration_field"])
+    status_field = fields.get(args["status_field"])
     options = {opt["name"]: opt for opt in status_field["options"]}
 
     for pos, pipeline in enumerate(ws["pipelines"]):
@@ -221,19 +224,22 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
 
             # set estimate
             if issue["estimate"] and estimate_field is not None:
-                # 8 steps
-                story_points = [40, 21, 13, 8, 5, 3, 2, 1]
-                # TODO: if another scale we just pick closest number. Should get scale from zenhub but how?
-                pos = min(
-                    range(len(story_points)),
-                    key=lambda i: abs(story_points[i] - issue["estimate"]["value"]),
-                )
-                size = estimate_field["options"][
-                    round(pos / len(story_points) * len(estimate_field["options"]))
-                ]
+                if "options" in estimate_field:
+                    # 8 steps
+                    story_points = [40, 21, 13, 8, 5, 3, 2, 1]
+                    # TODO: if another scale we just pick closest number. Should get scale from zenhub but how?
+                    pos = min(
+                        range(len(story_points)),
+                        key=lambda i: abs(story_points[i] - issue["estimate"]["value"]),
+                    )
+                    size = estimate_field["options"][
+                        round(pos / len(story_points) * len(estimate_field["options"]))
+                    ]['id']
+                else:
+                    size = int(issue["estimate"]['value'])
                 changes += (
                     ["EST*"]
-                    if set_field(proj, item, estimate_field, size["id"], gh_query)
+                    if set_field(proj, item, estimate_field, size, gh_query)
                     else ["EST"]
                 )
 
@@ -247,6 +253,11 @@ def sync_workspace(ws, proj, fields, items, seen, zh_query, gh_query, **args):
                 )
                 changes += (
                     ["WS*"] if set_field(proj, item, workspace_field, value, gh_query) else []
+                )
+
+            if issue["sprints"]['nodes'] and iteration_field is not None:
+                changes += (
+                    ["IT*"] if set_field(proj, item, iteration_field, value, gh_query) else ["IT"]
                 )
 
             # TODO: hacky way to get get linked PR. but can't see another way yet
@@ -369,10 +380,14 @@ def field_value(item, field):
 
 def set_field(proj, item, field, value, gh_query):
     if not field_value(item, field) == value:
-        query = gh_set_option if "options" in field else gh_set_value
         if value is None:
             gh_query(gh_del_value, dict(proj=proj["id"], item=item["id"], field=field["id"]))
+        elif "options" in field:
+            if value not in {opt["id"] for opt in field["options"]}:
+                # Get closest match
+                value = fuzzy_get({opt["name"]: opt for opt in field["options"]}, value)['id']
         else:
+            query = gh_set_option if "options" in field else gh_set_number if type(value) == int or float else gh_set_value
             gh_query(query, dict(proj=proj["id"], item=item["id"], field=field["id"], value=value))
         return True
     else:
@@ -456,6 +471,12 @@ query ($pipelineId: ID!, $filters: IssueSearchFiltersInput!, $workspaceId:ID!) {
             }
             estimate {
                 value
+            }
+            sprints(first: 10) {
+                nodes {
+                    id
+                    name
+                }
             }
         }
     }
@@ -889,6 +910,27 @@ gh_set_value = gql(
         fieldId: $field
         value: { 
           text: $value       
+        }
+      }
+    ) {
+      projectV2Item {
+        id
+      }
+    }
+  }
+"""
+)
+
+gh_set_number = gql(
+    """
+  mutation($proj:ID!, $item:ID!, $field:ID!, $value:Float) {
+    updateProjectV2ItemFieldValue(
+      input: {
+        projectId: $proj
+        itemId: $item
+        fieldId: $field
+        value: { 
+          number: $value       
         }
       }
     ) {

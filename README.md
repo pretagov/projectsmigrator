@@ -5,7 +5,7 @@ Migrates one or more ZenHub workspaces to a Github Project
 Usage:
 
 ```
-python projectsmigrator.py https://github.com/orgs/myorg/myproj/1 --workspace="Workspace 1" --workspace="Workspace 2"
+python projectsmigrator.py https://github.com/orgs/myorg/myproj/1 -w="Workspace 1" --w="Workspace 2" -f="Estimate:Size" 
 ```
 
 # Details
@@ -25,7 +25,10 @@ The columns/status won't be added automatically but instead
 the issues will be placed in the closest existing column that matches.
 
 ## Epics
-Epics are recreated as checklists in the form
+
+The default setting is ```-f="Epic:Text"```
+
+This will recreate Epics as checklists in the form
 
 ``` markdown
 # Dependencies
@@ -36,6 +39,8 @@ Epics are recreated as checklists in the form
 ```
 
 ## Blocking/Blocked
+
+The default setting is ```-f="Blocking:Text"```
 
 An issue that is blocked will have a dependencies section added to it that lists the blocking issues
 
@@ -51,6 +56,8 @@ e.g.
 Issues that are blocking will remain unchaged.
 
 ## Linked Pull Request
+
+The default setting is ```-f="PR:Linked Pull Requests"```
 
 Since zenhub has its own way to linking pull requests to issues this information is transfered by
 modifying the PR to add text which then will use githubs automatic PR linking
@@ -74,22 +81,29 @@ You can specify which workspaces to merge using
 --workspace="Workspace 1" --workspace="Workspace 2"
 ```
 
+or merge all workspaces excluding some
+```
+--exclude="Workspace:Workspace 1*"
+```
+
 They are merged in the priorty listed. ie if fields/pipeline data differs, the first workspace data will be used
 
 If no workspaces are specified then all workspaces will be merged in most recently used order
 
-You can optionally add the workspace name the issue came from into a new custom field, but ff not enabled this information is not transfered
-
-```
---workspace_field="Workspace"
-```
+You can optionally add the workspace name the issue came from into a new custom field, but ff not enabled this information is not transfered. This can be enabled with ```-f="Workspace:MyWorkspaceField"```
 
 
 ## High Priority
+
+The default setting is ```-f="Priority:Priority"```
+
 By default Projects has a custom field called Priority with more options than zenhubs high priority flag.
 If this field exists we will migrate High Priority issues to the cloest word match.
 
 ## Estimate
+
+The default setting is ```-f="Estimate:Size"```
+
 The default Projects equivilent is "Size" which has a different scale to the default Zenhub story points.
 This is mapped by rank. The 1st estimate option becomes the 1st size option. The last estimate option becomes the last
 size option, and the rest are mapped proportionally.
@@ -97,6 +111,11 @@ size option, and the rest are mapped proportionally.
 NOTE: currently we haven't worked out how to read the options for estimate from zenhub so it assumes the default storypoints.
 if the value doesn't match one of those then it will pick the closest story point.
 
+## Sprints
+
+You can enable transfer of sprint information with ```-f="Sprint:MySprintField"```.
+
+If the field is a singleselect field it will pick the closest matching option.
 
 ## Authentication
 
@@ -109,14 +128,13 @@ Once you have got auth tokens for both you can either
   
 # TODO
 
-- [ ] Sprints - as a text field?
+- [ ] Optionally support Epics/blocking as a fields instead of checklists. Support more than one field mapping
+- [ ] Handle zenhub only epics and issues
 - [ ] Milestones - depricated and not possible to get from the graphql
 - [ ] Release Reports?
 - [ ] Handle different estimate scales
 - [ ] Migrate projects -> project
 - [ ] Fix inability to add more options to the workspace field
-- [ ] Handle zenhub only epics and issues
-- [ ] Optionally support Epics/blocking as a fields instead of checklists
 
 # Credits
 - PretaGov UK/AU https://pretagov.com

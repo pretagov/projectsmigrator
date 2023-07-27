@@ -9,7 +9,7 @@ Options:
   -f=SRC:DST:CNV, --field=SRC:DST:CNV  Transfer SRC field to DST field. "Text" as DST will add a checklist
                                        for Epic and Blocking issues, and values into the text for other fields.
                                        CNV "Scale" (match by rank), Exact or Closest (default).
-                                       One SRC can have many DST fields. "SRC:" means reset the default DST.
+                                       One SRC can have many DST fields.
                                        [Default: Estimate:Size:Scale, Priority:Priority, Pipeline:Status,
                                        PR:Linked Pull Requests, Epic:Text, Blocking:Text, Sprint:Iteration]
                                        "SRC:" Will not transfer this field
@@ -126,10 +126,12 @@ def merge_workspaces(project_url, workspace, field, **args):
     # Map src to tgt fields
     fields = {}
     all_fields["Text"] = TEXT
-    for mapping in args.get("field", default_mapping):
-        src, tgt, *conv = mapping.split(":") if ":" in mapping else (mapping, mapping)
-        fields.setdefault(src, []).append((all_fields.get(tgt), conv[0] if conv else None))
-    fields["PR"] = all_fields["Linked pull requests"] if fields["PR"] == TEXT else fields["PR"]
+    for fmapping in [default_mapping, field]:
+        tfields = {}        
+        for mapping in fmapping:
+            src, tgt, *conv = mapping.split(":") if ":" in mapping else (mapping, mapping)
+            tfields.setdefault(src, []).append((all_fields.get(tgt), conv[0] if conv else None))
+        fields.update(tfields)
 
     if "Workspace" in fields and fields["Workspace"] is None:
         # grey = gh_query.__self__.schema.type_map['ProjectV2SingleSelectFieldOptionColor'].values['GRAY']

@@ -226,7 +226,8 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, *
                 item = gh_query(gh_add_item, dict(proj=proj["id"], issue=gh_issue["id"]))[
                     "addProjectV2ItemById"
                 ]["item"]
-                items["key"] = item
+                items[key] = item
+                item['content'] = gh_issue  # Don't need to get this again via the query
                 changes += ["ADD*"]
             if key in seen:
                 print(f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP")

@@ -128,13 +128,18 @@ Once you have got auth tokens for both you can either
   
 # TODO
 
-- [ ] Optionally support Epics/blocking as a fields instead of checklists. Support more than one field mapping
+- [ ] Fix resetting position to top of column
+- [ ] impliment filtering by src field
+- [x] Optionally support Epics/blocking as a fields instead of checklists. 
+- [x] Support more than one field mapping
+- [ ] handle sync data from closed issues
 - [ ] Handle zenhub only epics and issues
 - [ ] Milestones - depricated and not possible to get from the graphql
 - [ ] Release Reports?
 - [ ] Handle different estimate scales
 - [ ] Migrate projects -> project
 - [ ] Fix inability to add more options to the workspace field
+- [ ] set a default value. e.g. normal priority
 
 # Credits
 - PretaGov UK/AU https://pretagov.com

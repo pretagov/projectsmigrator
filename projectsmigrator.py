@@ -21,9 +21,10 @@ Options:
   -h, --help                           Show this screen.
 
 For zenhub the following fields are available.
-- Estimate, Priority, Pipeline, PR, Epic, Blocking, Sprint, Workspace
+- Estimate, Priority, Pipeline, PR, Epic, Blocking, Sprint, Position, Workspace
 For Projects the fields are customisable. However the following are special
 - Status: the column on the board
+- Position: Id of the item to place after
 - Text: turns the value into a checklist/list in the body
 - Linked Pull Requests: changes to the body of each PR to link back to the Issue  
 
@@ -44,6 +45,7 @@ default_mapping = [
     "Epic:Text",
     "Blocked By:Text",
     "Sprint:Iteration",
+    "Position:Position",
 ]
 
 # Special field to signify putting into body text
@@ -84,6 +86,7 @@ def merge_workspaces(project_url, workspace, field, **args):
         f["name"]: f
         for f in gh_query(gh_get_Fields, dict(proj=proj["id"]))["node"]["fields"]["nodes"]
     }
+    all_fields['Position'] = dict(name="Position")
 
     # Get proj states
 
@@ -155,11 +158,9 @@ def merge_workspaces(project_url, workspace, field, **args):
 
     # We need to set the body on any that we changed
     print("Save text changes")
-    res = []
     for item in items.values():
-        if set_text(item["content"], gh_query):
-            res.append(item["content"])
-            print(f"- '{item['content']['title']}' - UPDATED")
+        action = 'UPDATED' if set_text(item['content'], gh_query) else 'SKIPPED'
+        print(f"- '{item['content']['title']}' - {action}")
 
     # get list of all items in the current project so we can remove ones added by mistake if desired.
     if not args["disable_remove"]:
@@ -249,8 +250,26 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                 for field, conv in dst:
                     res = []
                     closest = conv.lower() != "exact" if conv else True
-                    value, options = zh_value(ws, issue, src, epics, deps, zh_query)
-                    if not value or not field:
+                    if src == 'Position':
+                        value, options = last[status['id']]["id"] if last.get(status['id']) else None, []
+                    else:
+                        value, options = zh_value(ws, issue, src, epics, deps, zh_query)
+                    if field and field.get('name') == 'Position':
+                        # set order/position
+                        if item.get("after", {}).get("id") == value and not last.get(status['id'], {}).get("_moved"):
+                            changes += []
+                        else:
+                            gh_query(
+                                gh_set_order,
+                                dict(
+                                    proj=proj["id"],
+                                    item=item["id"],
+                                    after=value,
+                                ),
+                            )
+                            changes += ["POS*"] if value else ["TOP*"]
+                            item['_moved'] = True             
+                    elif not value or not field:
                         # TODO: we should unset the field?
                         continue
                     elif type(value) == list:
@@ -304,23 +323,9 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                         res.append(set_field(proj, item, field, new_value, gh_query))
                     else:
                         res.append(set_field(proj, item, field, value, gh_query, closest))
-                    changes += [f"{field.get('name', src)[:3].upper()}{'*' if any(res) else ''}"]
+                    if res:
+                        changes += [f"{field.get('name', src)[:3].upper()}{'*' if any(res) else ''}"]
 
-            # set order/position
-            after = last[status['id']]["id"] if last.get(status['id']) else None
-            if item.get("after", {}).get("id") == after and not last.get(status['id'], {}).get("_moved"):
-                changes += []
-            else:
-                gh_query(
-                    gh_set_order,
-                    dict(
-                        proj=proj["id"],
-                        item=item["id"],
-                        after=after,
-                    ),
-                )
-                changes += ["POS*"] if after else ["TOP*"]
-                item['_moved'] = True
             last[status['id']] = item
 
             print(f"- '{issue['repository']['name']}':'{issue['title']}' - {', '.join(changes)}")

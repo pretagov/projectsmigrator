@@ -21,8 +21,12 @@ python projectsmigrator.py --help
 
 
 ## Columns/Status
-The columns/status won't be added automatically but instead
+The default setting is ```-f="Pipeline:Status"```
+The columns/status value won't be added automatically if it doesn't exist but instead
 the issues will be placed in the closest existing column that matches.
+
+The position with in that column is set using the default ```-f="Position:Position"```.
+
 
 ## Epics
 
@@ -102,7 +106,7 @@ If this field exists we will migrate High Priority issues to the cloest word mat
 
 ## Estimate
 
-The default setting is ```-f="Estimate:Size"```
+The default setting is ```-f="Estimate:Size:Scale"```
 
 The default Projects equivilent is "Size" which has a different scale to the default Zenhub story points.
 This is mapped by rank. The 1st estimate option becomes the 1st size option. The last estimate option becomes the last
@@ -128,10 +132,7 @@ Once you have got auth tokens for both you can either
   
 # TODO
 
-- [ ] Fix resetting position to top of column
 - [ ] impliment filtering by src field
-- [x] Optionally support Epics/blocking as a fields instead of checklists. 
-- [x] Support more than one field mapping
 - [ ] handle sync data from closed issues
 - [ ] Handle zenhub only epics and issues
 - [ ] Milestones - depricated and not possible to get from the graphql

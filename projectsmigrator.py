@@ -101,9 +101,14 @@ def merge_workspaces(project_url, workspace, field, **args):
             break
         cursor = res["pageInfo"]["endCursor"]
     print()
+
     # Record order so we can see if it needs moving
-    for i, next in zip(items[:-1], items[1:]):
-        next["after"] = i
+    board = {}
+    for i in items:
+        status = field_value(i, all_fields['Status'])
+        col = board.setdefault(status, [])
+        i['after'] = col[-1] if col else {}
+        col.append(i)
     items = {issue_key(item["content"]): item for item in items}
 
     # map excludes
@@ -127,7 +132,7 @@ def merge_workspaces(project_url, workspace, field, **args):
     fields = {}
     all_fields["Text"] = TEXT
     for fmapping in [default_mapping, field]:
-        tfields = {}        
+        tfields = {}
         for mapping in fmapping:
             src, tgt, *conv = mapping.split(":") if ":" in mapping else (mapping, mapping)
             tfields.setdefault(src, []).append((all_fields.get(tgt), conv[0] if conv else None))
@@ -143,9 +148,10 @@ def merge_workspaces(project_url, workspace, field, **args):
         # TODO: add in missing options
 
     seen = {}
+    last = {}
     for name in workspace:
         ws = fuzzy_get(workspaces, name)
-        sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, **args)
+        sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_query, **args)
 
     # We need to set the body on any that we changed
     print("Save text changes")
@@ -167,7 +173,7 @@ def merge_workspaces(project_url, workspace, field, **args):
             print(f"- '{repo[0]}':'{name}' - REMOVED")
 
 
-def sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, **args):
+def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_query, **args):
     # TODO: we aren't syncing data on closed tickets that were part of the workspace,
     # - would be send these to a special closes status or just remove them from the project?
 
@@ -199,7 +205,6 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, *
         # for now we will just pick closest match
         status = fuzzy_get(statuses, pipeline["name"])
         print(f"Merging {ws['name']}/{pipeline['name']} -> {proj['title']}/{status['name']}")
-        last = None
         for issue in issues:
             issue["Pipeline"] = pipeline["name"]
             changes = []
@@ -229,7 +234,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, *
                     "addProjectV2ItemById"
                 ]["item"]
                 items[key] = item
-                item['content'] = gh_issue  # Don't need to get this again via the query
+                item["content"] = gh_issue  # Don't need to get this again via the query
                 changes += ["ADD*"]
             if key in seen:
                 print(f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP")
@@ -243,6 +248,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, *
             for src, dst in fields.items():
                 for field, conv in dst:
                     res = []
+                    closest = conv.lower() != "exact" if conv else True
                     value, options = zh_value(ws, issue, src, epics, deps, zh_query)
                     if not value or not field:
                         # TODO: we should unset the field?
@@ -286,27 +292,36 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, zh_query, gh_query, *
                             for sub in value:
                                 sub = get_issue(gh_query, items, sub["url"])
                                 res.append(
-                                    set_field(proj, sub, field, gh_issue["title"], gh_query)
+                                    set_field(
+                                        proj, sub, field, gh_issue["title"], gh_query, closest
+                                    )
                                 )
-                    elif conv == "Scale" and "options" in field and options:
+                    elif conv and conv.lower() == "scale" and "options" in field and options:
                         # work out closest by rank
                         pos = options.index(value)
                         new_opt = field["options"]
                         new_value = new_opt[round(pos / len(options) * len(new_opt))]["id"]
                         res.append(set_field(proj, item, field, new_value, gh_query))
                     else:
-                        res.append(set_field(proj, item, field, value, gh_query))
+                        res.append(set_field(proj, item, field, value, gh_query, closest))
                     changes += [f"{field.get('name', src)[:3].upper()}{'*' if any(res) else ''}"]
 
             # set order/position
-            if last is None:
-                pass
-            elif item.get("after", {}).get("id") == last["id"]:
+            after = last[status['id']]["id"] if last.get(status['id']) else None
+            if item.get("after", {}).get("id") == after and not last.get(status['id'], {}).get("_moved"):
                 changes += []
             else:
-                gh_query(gh_set_order, dict(proj=proj["id"], item=item["id"], after=last["id"]))
-                changes += ["POS*"]
-            last = item
+                gh_query(
+                    gh_set_order,
+                    dict(
+                        proj=proj["id"],
+                        item=item["id"],
+                        after=after,
+                    ),
+                )
+                changes += ["POS*"] if after else ["TOP*"]
+                item['_moved'] = True
+            last[status['id']] = item
 
             print(f"- '{issue['repository']['name']}':'{issue['title']}' - {', '.join(changes)}")
 
@@ -328,7 +343,7 @@ def fuzzy_get(dct, key, closest=True, globs=False):
         res = next(iter(difflib.get_close_matches(key, dct.keys(), 1, 0)))
     else:
         res = key
-    return dct[res]
+    return dct.get(res, None)
 
 
 def get_issue(gh_query, items, url=None, owner=None, repo=None, number=None):
@@ -429,17 +444,16 @@ def field_value(item, field):
         )
 
 
-def set_field(proj, item, field, value, gh_query):
-    if value is None:
-        if field_value(item, field) == None:
-            return False
+def set_field(proj, item, field, value, gh_query, closest=True):
+    if "options" in field and value not in {opt["id"] for opt in field["options"]}:
+        # Get closest match
+        value = fuzzy_get({opt["name"]: opt for opt in field["options"]}, value, closest=closest)
+        value = value["id"] if value else None
+    if field_value(item, field) == value:
+        return False
+    elif value is None:
         gh_query(gh_del_value, dict(proj=proj["id"], item=item["id"], field=field["id"]))
     else:
-        if "options" in field and value not in {opt["id"] for opt in field["options"]}:
-            # Get closest match
-            value = fuzzy_get({opt["name"]: opt for opt in field["options"]}, value)["id"]
-        if field_value(item, field) == value:
-            return False
         query = (
             gh_set_option
             if "options" in field
@@ -459,7 +473,8 @@ def add_text(gh_issue, name, text):
 def set_text(gh_issue, gh_query, heading="Dependencies"):
     if "_deps" not in gh_issue:
         return False
-    body, *rest = gh_issue["body"].split(f"\r\n# {heading}\r\n", 1)
+    old_body = get_issue(gh_query, {}, gh_issue['url'])["body"]
+    body, *rest = old_body.split(f"\r\n# {heading}\r\n", 1)
     rest = "" if not rest else rest[0]
     if "\n# " in rest:
         rest = rest[rest.find("\r\n# ") :]
@@ -474,7 +489,7 @@ def set_text(gh_issue, gh_query, heading="Dependencies"):
         text = (f"\n# {heading}\n" + text).replace("\n", "\r\n")
     new_body = body + text + rest
 
-    if gh_issue["body"] != new_body:
+    if old_body != new_body:
         gh_query(
             gh_setpr_body if "/pull/" in gh_issue["url"] else gh_set_body,
             dict(id=gh_issue["id"], body=new_body),
@@ -776,7 +791,6 @@ gh_proj_items = gql(
                   url
                   id
                   number
-                  body
                   repository {id name archivedAt owner{login }}
                 }
                 ... on PullRequest {
@@ -784,7 +798,6 @@ gh_proj_items = gql(
                   url
                   id
                   number
-                  body        
                   repository {id name archivedAt owner{login }}
                 }
             }
@@ -801,7 +814,6 @@ gh_proj_items = gql(
               }
             }
             type
-            updatedAt
           }
         }
       } 
@@ -1074,7 +1086,7 @@ gh_del_value = gql(
 
 gh_set_order = gql(
     """
-  mutation($proj:ID!, $item:ID!, $after:ID!) {
+  mutation($proj:ID!, $item:ID!, $after:ID) {
     updateProjectV2ItemPosition(
       input: {
         projectId: $proj

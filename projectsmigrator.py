@@ -297,12 +297,13 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                                         f"- '{gh_issue['title']}' - SKIP PR update on '{sub['url']}'"
                                     )
                                     continue
+                                # TODO: this will only work if the base is the main branch. Linked field won't get updated
                                 sub = get_issue(gh_query, items, sub["url"])
                                 res.append(
                                     add_text(
                                         sub,
                                         "Linked Issues",
-                                        f"- fixes {shorturl(gh_issue['url'])}",
+                                        f"- Fixes {shorturl(gh_issue['url'])}",
                                     )
                                 )
                         else:
@@ -472,7 +473,10 @@ def set_field(proj, item, field, value, gh_query, closest=True):
 
 def add_text(gh_issue, name, text):
     # Add the text in there and combine at the end
-    gh_issue.setdefault("_deps", {}).setdefault(name, []).append(text)
+    checklist = gh_issue.setdefault("_deps", {}).setdefault(name, [])
+    if text not in checklist:
+        # Some linked PR cna be duplicated
+        checklist.append(text)
 
 
 def set_text(gh_issue, gh_query, heading="Dependencies"):

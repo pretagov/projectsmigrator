@@ -10,7 +10,7 @@ python projectsmigrator.py https://github.com/orgs/myorg/myproj/1 -w="Workspace 
 
 # Details
 
-The project must be a ProjectV2 and must already exist.
+The project must be a ProjectV2 and must already exist and you should add the status and other field options you want manually first.
 
 To see all the options look at https://raw.githubusercontent.com/pretagov/projectsmigrator/main/projectsmigrator.py
 or run 
@@ -27,6 +27,9 @@ the issues will be placed in the closest existing column that matches.
 
 The position with in that column is set using the default ```-f="Position:Position"```.
 
+You can drop pipelines via ```--exclude=Pipeline:MyIgnoredPipelines*```
+
+You can change the closest option match behaviour to an exact match via ```-f="Pipeline:Status:Exact"```
 
 ## Epics
 
@@ -41,6 +44,21 @@ This will recreate Epics as checklists in the form
 - [ ] #23
 - [ ] otherorg/otherepo#42
 ```
+
+While Projects doesn't have native support for Epics, this does seem to be what githubs is leaning towards on the supported way to
+related tickets togeather. When you view an issue that is a checklist elsewhere you will see this highlighted below the header and it
+will include the headings "Dependencies Epic" so you can see why they are related.
+
+One thing you lose is the ability to filter a board by Epic.
+
+If you want you can instead convert Epics as a field on the sub issue.
+
+```-f="Epic:MyEpicField"```. This will set the value to the name of the epic.
+
+You can if you want do both at the same time. 
+
+```-f="Epic:Text" -f="Epic:MyEpicField"```
+
 
 ## Blocking/Blocked
 
@@ -133,6 +151,8 @@ Once you have got auth tokens for both you can either
 # TODO
 
 - [ ] impliment filtering by src field
+- [ ] impliment filtering values
+- [ ] include labels as a field
 - [ ] handle sync data from closed issues
 - [ ] Handle zenhub only epics and issues
 - [ ] Milestones - depricated and not possible to get from the graphql

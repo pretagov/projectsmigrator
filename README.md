@@ -143,4 +143,13 @@ Once you have got auth tokens for both you can either
 - [ ] set a default value. e.g. normal priority
 
 # Credits
-- PretaGov UK/AU https://pretagov.com
+
+Sponsored by PretaGov UK/AU https://pretagov.com
+
+Inspired by [this manual process for migrating zenhub to projects](https://medium.com/collaborne-engineering/migrate-from-zenhub-to-github-projects-948d69adc17d)
+but we were motiviated by
+- the need for longer transition so needed some way to sync so we needed something more automated
+- the need to merge many workspaces into a single project
+- the idea that epics represented by checklists rather than fields would work better
+- the suprise that no one had written a tool for this already and that others might find it useful.
+

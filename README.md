@@ -115,11 +115,11 @@ If no workspaces are specified then all workspaces will be merged in most recent
 You can optionally add the workspace name the issue came from into a new custom field, but ff not enabled this information is not transfered. This can be enabled with ```-f="Workspace:MyWorkspaceField"```
 
 
-## High Priority
+## Priority
 
 The default setting is ```-f="Priority:Priority"```
 
-By default Projects has a custom field called Priority with more options than zenhubs high priority flag.
+By default Projects has a custom field called Priority with more options than zenhubs "High Priority" flag.
 If this field exists we will migrate High Priority issues to the cloest word match.
 
 ## Estimate
@@ -130,7 +130,7 @@ The default Projects equivilent is "Size" which has a different scale to the def
 This is mapped by rank. The 1st estimate option becomes the 1st size option. The last estimate option becomes the last
 size option, and the rest are mapped proportionally.
 
-NOTE: currently we haven't worked out how to read the options for estimate from zenhub so it assumes the default storypoints.
+NOTE: currently there doesn't seem to be an api to read the options for Estimate from zenhub so it assumes the default storypoints.
 if the value doesn't match one of those then it will pick the closest story point.
 
 ## Sprints
@@ -150,17 +150,24 @@ Once you have got auth tokens for both you can either
   
 # TODO
 
-- [ ] impliment filtering by src field
-- [ ] impliment filtering values
-- [ ] include labels as a field
+- [ ] Dry run mode
+- [ ] verbose or less verbose mode. esp to help see pipline mapping more clearly
+- [ ] CSV import
+- [ ] Migrate projects -> project
+- [ ] filtering issues by src field value
+- [ ] blacklist certain field values
+- [ ] include labels as a field target e.g. put workspace name as new label
 - [ ] handle sync data from closed issues
 - [ ] Handle zenhub only epics and issues
-- [ ] Milestones - depricated and not possible to get from the graphql
-- [ ] Release Reports?
+- [ ] zenhub Milestones - depricated and not possible to get from the graphql
+- [ ] zenhub Release Reports?
 - [ ] Handle different estimate scales
-- [ ] Migrate projects -> project
-- [ ] Fix inability to add more options to the workspace field
-- [ ] set a default value. e.g. normal priority
+- [ ] Fix inability to add more options to the workspace field or removing adding fields.
+- [ ] set a global default value. e.g. normal priority
+
+# Contributing
+
+PR's or tickets welcome
 
 # Credits
 

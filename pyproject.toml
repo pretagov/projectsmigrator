@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "projectsmigrator"
-version = "0.0.1"
+version = "0.0.2"
 description = "Migrates one or more ZenHub workspaces to a Github Project"
 authors = [
   { name = "Dylan Jay", email = "software@pretagov.com" },

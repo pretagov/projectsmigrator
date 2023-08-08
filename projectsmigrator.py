@@ -90,7 +90,7 @@ def merge_workspaces(project_url, workspace, field, **args):
 
     # Get proj states
 
-    # Get all the items so we can speed up queries and reduce updates
+    # Get all the items so we can speed up queries and reduce updates. But don't get body yet due to rate limiting.
     items = []
     cursor = None
     print("Reading Project", end="")
@@ -105,7 +105,7 @@ def merge_workspaces(project_url, workspace, field, **args):
         cursor = res["pageInfo"]["endCursor"]
     print()
 
-    # Record order so we can see if it needs moving
+    # Record order/after so we can see if it needs moving
     board = {}
     for i in items:
         status = field_value(i, all_fields['Status'])
@@ -141,6 +141,8 @@ def merge_workspaces(project_url, workspace, field, **args):
             tfields.setdefault(src, []).append((all_fields.get(tgt), conv[0] if conv else None))
         fields.update(tfields)
 
+    # TODO: need a more general way to create fields, or get rid of the idea of creating fields
+    # TODO: problem with creating singleselect fields is there is no api to add extra options later
     if "Workspace" in fields and fields["Workspace"] is None:
         # grey = gh_query.__self__.schema.type_map['ProjectV2SingleSelectFieldOptionColor'].values['GRAY']
         options = [
@@ -148,7 +150,6 @@ def merge_workspaces(project_url, workspace, field, **args):
         ]
         field = gh_query(gh_add_field, dict(name="Workspace", proj=proj["id"], options=options))
         field["Workspace"] = fields["Workspace"] = field
-        # TODO: add in missing options
 
     seen = {}
     last = {}
@@ -1115,6 +1116,7 @@ gh_set_order = gql(
 
 
 def main():
+    # turn my docopt args into python args
     args = {k.strip("<>-- ").replace("-", "_").lower(): v for k, v in docopt(__doc__).items()}
     merge_workspaces(**args)
 

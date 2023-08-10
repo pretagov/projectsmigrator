@@ -20,8 +20,9 @@ Options:
   --zenhub-token=<token>               or use env var ZENHUB_TOKEN.
   -h, --help                           Show this screen.
 
-For zenhub the following fields are available.
+For ZenHub the following fields are available.
 - Estimate, Priority, Pipeline, PR, Epic, Blocking, Sprint, Position, Workspace
+
 For Projects the fields are customisable. However the following are special
 - Status: the column on the board
 - Position: Id of the item to place after

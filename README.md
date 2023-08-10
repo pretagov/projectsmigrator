@@ -17,8 +17,6 @@ projectsmigrator https://github.com/orgs/myorg/myproj/1 -w="Workspace 1" --w="Wo
 
 # Details
 
-The project must be a ProjectV2 and must already exist and you should add the status and other field options you want manually first.
-
 ```
 Projects Migrator: Sync Zenhub workspaces into a single Github Project
 
@@ -44,28 +42,35 @@ Options:
 
 For zenhub the following fields are available.
 - Estimate, Priority, Pipeline, PR, Epic, Blocking, Sprint, Position, Workspace
+
 For Projects the fields are customisable. However the following are special
 - Status: the column on the board
 - Position: Id of the item to place after
 - Text: turns the value into a checklist/list in the body
 - Linked Pull Requests: changes to the body of each PR to link back to the Issue  
 ```
-
-
-To see all the options look at https://raw.githubusercontent.com/pretagov/projectsmigrator/main/projectsmigrator.py
-or run 
+or [Latest Usage](https://raw.githubusercontent.com/pretagov/projectsmigrator/main/projectsmigrator.py) or run 
 
 ```
-python projectsmigrator.py --help
+projectsmigrator --help
 ```
+
 
 Note if you want to install a github checkout of the latest code:
 ```
 python3 -m pip install -e .
 ```
 
+## Project
+
+The project must be a organisation ProjectV2 that already exists.
+
+You should add the status and other field options you want manually first.
+
+
 ## Columns/Status
 The default setting is ```-f="Pipeline:Status"```
+
 The columns/status value won't be added automatically if it doesn't exist but instead
 the issues will be placed in the closest existing column that matches.
 
@@ -186,6 +191,7 @@ If the field is a singleselect field it will pick the closest matching option.
 ## Authentication
 
 You will need access to both the Zenhub graphql api and Github graphql api.
+
 Once you have got auth tokens for both you can either 
 - put them environment variables ```ZENHUB_TOKEN``` and ```GITHUB_TOKEN```
 - use ```--zenhub-token=<token>``` and ```--github-token=<token>``` command line options

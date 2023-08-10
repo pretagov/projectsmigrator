@@ -2,15 +2,55 @@
 
 Migrates one or more ZenHub workspaces to a Github Project
 
+Install
+
+```
+pip install projectsmigrator
+```
+
 Usage:
 
 ```
-python projectsmigrator.py https://github.com/orgs/myorg/myproj/1 -w="Workspace 1" --w="Workspace 2" -f="Estimate:Size" 
+projectsmigrator https://github.com/orgs/myorg/myproj/1 -w="Workspace 1" --w="Workspace 2" -f="Estimate:Size" 
 ```
+
 
 # Details
 
 The project must be a ProjectV2 and must already exist and you should add the status and other field options you want manually first.
+
+```
+Projects Migrator: Sync Zenhub workspaces into a single Github Project
+
+Usage:
+  projectsmigrator PROJECT_URL [--workspace=NAME]... [--exclude=FIELD:PATTERN]... [--field=SRC:DST]... [options]
+  projectsmigrator (-h | --help)
+
+Options:
+  -w=NAME, --workspace=NAME            Name of a Zenhub workspace to import or none means include all.
+  -f=SRC:DST:CNV, --field=SRC:DST:CNV  Transfer SRC field to DST field. "Text" as DST will add a checklist
+                                       for Epic and Blocking issues, and values into the text for other fields.
+                                       CNV "Scale" (match by rank), Exact or Closest (default).
+                                       One SRC can have many DST fields.
+                                       [Default: Estimate:Size:Scale, Priority:Priority, Pipeline:Status,
+                                       PR:Linked Pull Requests, Epic:Text, Blocking:Text, Sprint:Iteration]
+                                       "SRC:" Will not transfer this field
+  -x=FIELD:PAT, --exclude=FIELD:PAT    Don't include issues with field values that match the pattern
+                                       e.g. "Workspace:Private*", "Pipeline:Done".
+  --disable-remove                     Project items not found in any of the workspace won't be removed.
+  --github-token=<token>               or use env var GITHUB_TOKEN.
+  --zenhub-token=<token>               or use env var ZENHUB_TOKEN.
+  -h, --help                           Show this screen.
+
+For zenhub the following fields are available.
+- Estimate, Priority, Pipeline, PR, Epic, Blocking, Sprint, Position, Workspace
+For Projects the fields are customisable. However the following are special
+- Status: the column on the board
+- Position: Id of the item to place after
+- Text: turns the value into a checklist/list in the body
+- Linked Pull Requests: changes to the body of each PR to link back to the Issue  
+```
+
 
 To see all the options look at https://raw.githubusercontent.com/pretagov/projectsmigrator/main/projectsmigrator.py
 or run 
@@ -19,6 +59,10 @@ or run
 python projectsmigrator.py --help
 ```
 
+Note if you want to install a github checkout of the latest code:
+```
+python3 -m pip install -e .
+```
 
 ## Columns/Status
 The default setting is ```-f="Pipeline:Status"```
@@ -146,7 +190,8 @@ Once you have got auth tokens for both you can either
 - put them environment variables ```ZENHUB_TOKEN``` and ```GITHUB_TOKEN```
 - use ```--zenhub-token=<token>``` and ```--github-token=<token>``` command line options
 
-- TODO: Required token permissions
+For Github currently only Classic tokens appear to work. For this you will need ```repo```, ```admin:org``` and ```project``` permissions.
+Fine grain personal access tokens don't currently appear to work.
   
 # TODO
 

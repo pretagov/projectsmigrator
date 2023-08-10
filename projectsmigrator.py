@@ -1,8 +1,8 @@
 """Projects Migrator: Sync Zenhub workspaces into a single Github Project
 
 Usage:
-  projectsmigrator.py PROJECT_URL [--workspace=NAME]... [--exclude=FIELD:PATTERN]... [--field=SRC:DST]... [options]
-  projectsmigrator.py (-h | --help)
+  projectsmigrator PROJECT_URL [--workspace=NAME]... [--exclude=FIELD:PATTERN]... [--field=SRC:DST]... [options]
+  projectsmigrator (-h | --help)
 
 Options:
   -w=NAME, --workspace=NAME            Name of a Zenhub workspace to import or none means include all.

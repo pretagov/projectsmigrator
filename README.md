@@ -94,20 +94,19 @@ This will recreate Epics as checklists in the form
 - [ ] otherorg/otherepo#42
 ```
 
-While Projects doesn't have native support for Epics, this does seem to be what githubs is leaning towards on the supported way to
-related tickets togeather. When you view an issue that is a checklist elsewhere you will see this highlighted below the header and it
+While Projects doesn't have native support for Epics, this does seem to be what GitHub is leaning towards for the recommended way to
+relate tickets togeather. When you view an issue that is a checklist elsewhere you will see this highlighted below the header and it
 will include the headings "Dependencies Epic" so you can see why they are related.
 
-One thing you lose is the ability to filter a board by Epic.
-
-If you want you can instead convert Epics as a field on the sub issue.
+One thing you lose is the ability to filter a board by Epic. If you want you can instead convert Epics as a field on the sub issue.
 
 ```-f="Epic:MyEpicField"```. This will set the value to the name of the epic.
 
-You can if you want do both at the same time. 
+Or you can both at the same time.
 
 ```-f="Epic:Text" -f="Epic:MyEpicField"```
 
+GitHub doesn't currently support multivalued fields so there isn't another way to set links on the Epic issue itself via a field.
 
 ## Blocking/Blocked
 
@@ -138,7 +137,7 @@ e.g.
 fixes otherorg/otherepo#42
 ```
 
-it won't do this for PR's in repos outside the org your project is in
+it won't do this for PR's in repos outside the org your project is in.
 
 NOTE: Github linked PR's will automatically close the linked ticket once the PR is merged
 to the main branch. This is different to zenhub. While you can't change this behavior, github
@@ -168,7 +167,7 @@ You can optionally add the workspace name the issue came from into a new custom 
 
 The default setting is ```-f="Priority:Priority"```
 
-By default Projects has a custom field called Priority with more options than zenhubs "High Priority" flag.
+By default Projects has a custom field called Priority with more options than ZenHub's "High Priority" flag.
 If this field exists we will migrate High Priority issues to the cloest word match.
 
 ## Estimate
@@ -176,12 +175,12 @@ If this field exists we will migrate High Priority issues to the cloest word mat
 The default setting is ```-f="Estimate:Size:Scale"```
 
 The default Projects equivilent is "Size" which has a different scale to the default Zenhub story points.
-This is mapped by rank. The 1st estimate option becomes the 1st size option. The last estimate option becomes the last
-size option, and the rest are mapped proportionally.
 
-NOTE: currently there doesn't seem to be an api to read the options for Estimate from zenhub so it assumes the default storypoints.
+This is mapped by rank (The ```:Scale``` suffix) rather than my word match. The 1st estimate option becomes the 1st size option. The last estimate option becomes the last
+size option, and the rest are mapped proportionally. Currently there doesn't seem to be an api to read the options for Estimate from zenhub so it assumes the default storypoints.
 if the value doesn't match one of those then it will pick the closest story point.
 
+If you would like to match by closest then use ```-f="Estimate:Size:Closest"```. Closest is based on letters, not numerically.
 ## Sprints
 
 You can enable transfer of sprint information with ```-f="Sprint:MySprintField"```.

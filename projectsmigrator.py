@@ -61,7 +61,7 @@ def merge_workspaces(project_url, workspace, field, **args):
         transport=AIOHTTPTransport(
             url="https://api.zenhub.com/public/graphql",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=60,
+            timeout=90,
         ),
         fetch_schema_from_transport=True,
         serialize_variables=True,
@@ -71,7 +71,7 @@ def merge_workspaces(project_url, workspace, field, **args):
         transport=AIOHTTPTransport(
             url="https://api.github.com/graphql",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=60,
+            timeout=90,
         ),
         fetch_schema_from_transport=False,
         serialize_variables=True,
@@ -152,17 +152,20 @@ def merge_workspaces(project_url, workspace, field, **args):
         field = gh_query(gh_add_field, dict(name="Workspace", proj=proj["id"], options=options))
         field["Workspace"] = fields["Workspace"] = field
 
+    stats = dict(removed=0, text=0, added=0)
     seen = {}
     last = {}
     for name in workspace:
         ws = fuzzy_get(workspaces, name)
-        sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_query, **args)
+        stats['added'] += sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_query, **args)
+
 
     # We need to set the body on any that we changed
     print("Save text changes")
     for item in items.values():
-        action = 'UPDATED' if set_text(item['content'], gh_query) else 'SKIPPED'
-        print(f"- '{item['content']['title']}' - {action}")
+        updated = set_text(item['content'], gh_query)
+        print(f"- '{item['content']['title']}' - {'UPDATED' if updated else 'SKIPPED'}")
+        stats['text'] += 1 if updated else 0
 
     # get list of all items in the current project so we can remove ones added by mistake if desired.
     if not args["disable_remove"]:
@@ -174,11 +177,15 @@ def merge_workspaces(project_url, workspace, field, **args):
         for repo, name, item in all_items - added_items:
             gh_query(gh_del_item, dict(proj=proj["id"], issue=item))
             print(f"- '{repo[0]}':'{name}' - REMOVED")
+            stats['removed'] += 1
+    return stats
 
 
 def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_query, **args):
     # TODO: we aren't syncing data on closed tickets that were part of the workspace,
     # - would be send these to a special closes status or just remove them from the project?
+
+    added = 0
 
     epics = {
         e["issue"]["id"]: e
@@ -239,6 +246,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                 items[key] = item
                 item["content"] = gh_issue  # Don't need to get this again via the query
                 changes += ["ADD*"]
+                added += 1
             if key in seen:
                 print(f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP")
                 continue
@@ -251,7 +259,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
             for src, dst in fields.items():
                 for field, conv in dst:
                     res = []
-                    closest = conv.lower() != "exact" if conv else True
+                    closest = conv.lower() if conv and conv.lower() in ['closest', 'exact', 'scale'] else 'closest'
                     if src == 'Position':
                         value, options = last[status['id']]["id"] if last.get(status['id']) else None, []
                     else:
@@ -315,23 +323,18 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                                 sub = get_issue(gh_query, items, sub["url"])
                                 res.append(
                                     set_field(
-                                        proj, sub, field, gh_issue["title"], gh_query, closest
+                                        proj, sub, field, gh_issue["title"], gh_query, closest, options
                                     )
                                 )
-                    elif conv and conv.lower() == "scale" and "options" in field and options:
-                        # work out closest by rank
-                        pos = options.index(value)
-                        new_opt = field["options"]
-                        new_value = new_opt[round(pos / len(options) * len(new_opt))]["id"]
-                        res.append(set_field(proj, item, field, new_value, gh_query))
                     else:
-                        res.append(set_field(proj, item, field, value, gh_query, closest))
+                        res.append(set_field(proj, item, field, value, gh_query, closest, options))
                     if res:
                         changes += [f"{field.get('name', src)[:3].upper()}{'*' if any(res) else ''}"]
 
             last[status['id']] = item
 
             print(f"- '{issue['repository']['name']}':'{issue['title']}' - {', '.join(changes)}")
+    return added
 
 
 def fuzzy_get(dct, key, closest=True, globs=False):
@@ -452,11 +455,25 @@ def field_value(item, field):
         )
 
 
-def set_field(proj, item, field, value, gh_query, closest=True):
-    if "options" in field and value not in {opt["id"] for opt in field["options"]}:
+field_stats = {}
+
+
+def set_field(proj, item, field, value, gh_query, match="closest", options=[]):
+    orig_value = value
+    if match == "scale" and "options" in field and options:
+        # work out closest by rank
+        pos = options.index(value)
+        new_opt = field["options"]
+        value = new_opt[round(pos / len(options) * len(new_opt))]["id"]
+    elif "options" in field and value not in {opt["id"] for opt in field["options"]}:
         # Get closest match
-        value = fuzzy_get({opt["name"]: opt for opt in field["options"]}, value, closest=closest)
+        value = fuzzy_get({opt["name"]: opt for opt in field["options"]}, value, closest=match == 'closest')
         value = value["id"] if value else None
+    if "options" in field:
+        vname = next((f['name'] for f in field['options'] if f['id'] == value), None)
+        mapping = field_stats.setdefault(field['name'], {})
+        mapping.setdefault((orig_value, vname), 0)
+        mapping[(orig_value, vname)] += 1
     if field_value(item, field) == value:
         return False
     elif value is None:
@@ -1119,7 +1136,20 @@ gh_set_order = gql(
 def main():
     # turn my docopt args into python args
     args = {k.strip("<>-- ").replace("-", "_").lower(): v for k, v in docopt(__doc__).items()}
-    merge_workspaces(**args)
+    stats = merge_workspaces(**args)
+
+    print()
+    print("Summary")
+    print("=======")
+    print("Added: {added}, Removed:{removed}, Text Changes:{text}".format(**stats))
+    print()
+
+    for fieldname, values in field_stats.items(): 
+        print(fieldname)
+        for from_to, count in values.items():
+            _from, to = from_to
+            print(f"\t{_from} -> {to}: {count}")
+
 
 
 if __name__ == "__main__":

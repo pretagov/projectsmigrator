@@ -18,6 +18,7 @@ Options:
   --disable-remove                     Project items not found in any of the workspace won't be removed.
   --github-token=<token>               or use env var GITHUB_TOKEN.
   --zenhub-token=<token>               or use env var ZENHUB_TOKEN.
+  --timeout=<seconds>                  How long to wait for apis [Default: 180]
   -h, --help                           Show this screen.
 
 For ZenHub the following fields are available.
@@ -61,7 +62,7 @@ def merge_workspaces(project_url, workspace, field, **args):
         transport=AIOHTTPTransport(
             url="https://api.zenhub.com/public/graphql",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=90,
+            timeout=int(args['timeout']),
         ),
         fetch_schema_from_transport=True,
         serialize_variables=True,
@@ -71,7 +72,7 @@ def merge_workspaces(project_url, workspace, field, **args):
         transport=AIOHTTPTransport(
             url="https://api.github.com/graphql",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=90,
+            timeout=int(args['timeout']),
         ),
         fetch_schema_from_transport=False,
         serialize_variables=True,
@@ -163,21 +164,31 @@ def merge_workspaces(project_url, workspace, field, **args):
     # We need to set the body on any that we changed
     print("Save text changes")
     for item in items.values():
+        if not item['content'] or '_deps' not in item['content']:
+            continue
         updated = set_text(item['content'], gh_query)
         print(f"- '{item['content']['title']}' - {'UPDATED' if updated else 'SKIPPED'}")
         stats['text'] += 1 if updated else 0
 
     # get list of all items in the current project so we can remove ones added by mistake if desired.
-    if not args["disable_remove"]:
-        print(f"Not in any workspace")
-        all_items = set(
-            (r, i.get("content", {}).get("title"), i["id"]) for r, i in items.items() if "id" in i
-        )
-        added_items = set((r, i.get("content", {}).get("title"), i["id"]) for r, i in seen.items())
-        for repo, name, item in all_items - added_items:
+    print()
+    print(f"Can remove - items no longer in input")
+    print("======================================")
+    all_items = set(
+        (r, i.get("content", {}).get("title"), i["id"]) for r, i in items.items() if "id" in i
+    )
+    added_items = set((r, i.get("content", {}).get("title"), i["id"]) for r, i in seen.items())
+    for repo, name, item in all_items - added_items:
+        if not repo:
+            print(f"- '{repo[0]}':'{name}' - NOT REMOVED - Draft Issue")
+        elif args["disable_remove"]:
+            print(f"- '{repo[0]}':'{name}' - NOT REMOVED - --disable-remove=true")
+        else:
             gh_query(gh_del_item, dict(proj=proj["id"], issue=item))
             print(f"- '{repo[0]}':'{name}' - REMOVED")
             stats['removed'] += 1
+    else:
+        print("- None")
     return stats
 
 
@@ -223,19 +234,24 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                 item = items[key]
                 gh_issue = item["content"]
             else:
-                gh_issue = get_issue(
-                    gh_query,
-                    items,
-                    number=issue["number"],
-                    repo=issue["repository"]["name"],
-                    owner=issue["repository"]["owner"]["login"],
-                )
+                gh_issue = get_issue(gh_query, items, issue=issue)
                 item = None
 
             if gh_issue["repository"]["archivedAt"] is not None:
                 # handle if the issue is in archived repo
                 print(
-                    f"- '{issue['repository']['name']}':'{issue['title']}' - Archived Repo - SKIP"
+                    f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP - Archived Repo"
+                )
+                continue
+            elif zh_value(ws, issue, "Linked Issues", epics, deps, zh_query)[0]:
+                # Any PR that is linked we don't want to appear on the board
+                # If linked correctly then it will appear be merged in with the issue
+                # If not gh linked (e.g. not main branch PR), then we want to hide it since it's not on ZH Board
+                # TODO: this does mean any fields set on the item will not be transfered
+                # - linked PR won't appear in the board but does it appear in other views if added?
+                # - to fix we'd have to only skip PR's that we can't link.
+                print(
+                    f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP - don't add linked PRs"
                 )
                 continue
             elif item is None:
@@ -248,7 +264,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                 changes += ["ADD*"]
                 added += 1
             if key in seen:
-                print(f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP")
+                print(f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP - Added already")
                 continue
             else:
                 seen[key] = item
@@ -266,6 +282,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                         value, options = zh_value(ws, issue, src, epics, deps, zh_query)
                     if field and field.get('name') == 'Position':
                         # set order/position
+                        # TODO: there is a way with less moves
                         if item.get("after", {}).get("id") == value and not last.get(status['id'], {}).get("_moved"):
                             changes += []
                         else:
@@ -290,32 +307,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                                 text += f"- [ ] {shorturl(sub['url'])}\n"
                             res.append(add_text(gh_issue, src, text))
                         elif field["name"] == "Linked pull requests":
-                            # We can't set this directly. Only by modifying each PR text.
-                            # # TODO: there is special linked PR field but can't set it? https://github.com/orgs/community/discussions/40860
-                            # # seems like it only lets you create a branch, not link a PR? do via discussion? or work out how UI lets you set it?
-                            # # gh_query(gh_set_value, dict(proj=proj, item=item['id'], field=fields['Linked pull requests']['id'], value=pr['url']))
-                            for sub in value:
-                                # Check not already linked
-                                linked = field_value(item, field)
-                                if linked and any(
-                                    pr["url"] == sub["url"] for pr in linked["nodes"]
-                                ):
-                                    continue
-                                if gh_issue["url"].split("/")[:4] != sub["url"].split("/")[:4]:
-                                    # Let's skip modifying others PR's
-                                    print(
-                                        f"- '{gh_issue['title']}' - SKIP PR update on '{sub['url']}'"
-                                    )
-                                    continue
-                                # TODO: this will only work if the base is the main branch. Linked field won't get updated
-                                sub = get_issue(gh_query, items, sub["url"])
-                                res.append(
-                                    add_text(
-                                        sub,
-                                        "Linked Issues",
-                                        f"- Fixes {shorturl(gh_issue['url'])}",
-                                    )
-                                )
+                            res.extend(update_linked_prs(item, gh_issue, field, value))
                         else:
                             # only other way to record this is by
                             # setting a field value on the linked item
@@ -327,6 +319,9 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                                     )
                                 )
                     else:
+                        # TODO: if it's a PR that ZH thinks is linked but github doesn't like the link (ie not PR to main). 
+                        # Then maybe reset status to None so doesn't appear in the project?
+                        # or if that doesn't work, never add it
                         res.append(set_field(proj, item, field, value, gh_query, closest, options))
                     if res:
                         changes += [f"{field.get('name', src)[:3].upper()}{'*' if any(res) else ''}"]
@@ -357,9 +352,13 @@ def fuzzy_get(dct, key, closest=True, globs=False):
     return dct.get(res, None)
 
 
-def get_issue(gh_query, items, url=None, owner=None, repo=None, number=None):
+def get_issue(gh_query, items, url=None, owner=None, repo=None, number=None, issue=None):
     if url is not None:
         prot, _, gh, owner, repo, _type, number = url.split("/")[:7]
+    elif issue is not None:
+        number = issue["number"]
+        repo = issue["repository"]["name"]
+        owner = issue["repository"]["owner"]["login"]
 
     if (owner, repo, number) in items:
         return items[(owner, repo, number)]["content"]
@@ -408,20 +407,11 @@ def zh_value(ws, issue, name, epics, deps, zh_query):
         # Can't really set multiple iterations so just use latest
         return issue["sprints"]["nodes"][-1], []
     elif name == "PR":
-        urls = []
-        for hist in [
-            hist["data"]
-            for hist in issue["timelineItems"]["nodes"]
-            if "issue.connect_issue_to_pr" in hist["type"]
-        ]:
-            powner, prepo, pnumber = (
-                hist["pull_request_organization"]["login"],
-                hist["pull_request_repository"]["name"],
-                hist["pull_request"]["number"],
-            )
-            prurl = f"https://github.com/{powner}/{prepo}/pull/{pnumber}"
-            urls.append(dict(url=prurl))
-        return urls, []
+        urls = zh_history_values(issue, "issue.connect_issue_to_pr", "issue.disconnect_issue_from_pr")
+        return [u for u in urls if "/oull/" in u], []
+    elif name == "Linked Issues":
+        urls = zh_history_values(issue, "issue.connect_issue_to_pr", "issue.disconnect_issue_from_pr")
+        return [u for u in urls if "/issue/" in u], []
     elif name == "Epic":
         if issue["id"] not in epics:
             return None, []
@@ -439,6 +429,36 @@ def zh_value(ws, issue, name, epics, deps, zh_query):
     else:
         return (None, [])
 
+
+def zh_history_values(issue, add_event, rm_event):
+    # Use the history in ZH to work out the value of some fields there is no api for
+    urls = []
+    for htype, hist in [
+        (hist["type"], hist["data"])
+        for hist in issue["timelineItems"]["nodes"]
+        if hist["type"] in [add_event, rm_event]
+    ]:
+        if "pull_request" in hist:
+            itype, owner, repo, number = (
+                "pull",
+                hist["pull_request_organization"]["login"],
+                hist["pull_request_repository"]["name"],
+                hist["pull_request"]["number"],
+            )
+        else:
+            itype, owner, repo, number = (
+                "issue",
+                hist["issue_organization"]["login"],
+                hist["issue_repository"]["name"],
+                hist["issue"]["number"],
+            )
+        url = f"https://github.com/{owner}/{repo}/{itype}/{number}"
+        if htype == add_event:
+            urls.append(dict(url=url))
+        else:
+            urls.remove(dict(url=url))
+    return urls
+    
 
 def field_value(item, field):
     value = next(
@@ -490,6 +510,37 @@ def set_field(proj, item, field, value, gh_query, match="closest", options=[]):
     return True
 
 
+def update_linked_prs(item, gh_issue, field, value):
+    res = []
+    # We can't set this directly. Only by modifying each PR text.
+    # # TODO: there is special linked PR field but can't set it? https://github.com/orgs/community/discussions/40860
+    # # seems like it only lets you create a branch, not link a PR? do via discussion? or work out how UI lets you set it?
+    # # gh_query(gh_set_value, dict(proj=proj, item=item['id'], field=fields['Linked pull requests']['id'], value=pr['url']))
+    for sub in value:
+        # Check not already linked
+        linked = field_value(item, field)
+        if linked and any(
+            pr["url"] == sub["url"] for pr in linked["nodes"]
+        ):
+            continue
+        if gh_issue["url"].split("/")[:4] != sub["url"].split("/")[:4]:
+            # Let's skip modifying others PR's
+            print(
+                f"- '{gh_issue['title']}' - SKIP PR update on '{sub['url']}'"
+            )
+            continue
+        # TODO: this will only work if the base is the main branch. Linked field won't get updated
+        sub = get_issue(gh_query, items, sub["url"])
+        res.append(
+            add_text(
+                sub,
+                "Linked Issues",
+                f"- Fixes {shorturl(gh_issue['url'])}",
+            )
+        )
+    return res
+    
+
 def add_text(gh_issue, name, text):
     # Add the text in there and combine at the end
     checklist = gh_issue.setdefault("_deps", {}).setdefault(name, [])
@@ -529,7 +580,8 @@ def set_text(gh_issue, gh_query, heading="Dependencies"):
 
 
 def issue_key(issue):
-    return (issue["repository"]["owner"]["login"], issue["repository"]["name"], issue["number"])
+    # Can be a DRAFT_ISSUE which has no content
+    return (issue["repository"]["owner"]["login"], issue["repository"]["name"], issue["number"]) if issue else None
 
 
 def shorturl(url, base=None):

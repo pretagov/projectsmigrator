@@ -31,7 +31,7 @@ Options:
                                        CNV "Scale" (match by rank), Exact or Closest (default).
                                        One SRC can have many DST fields.
                                        [Default: Estimate:Size:Scale, Priority:Priority, Pipeline:Status,
-                                       PR:Linked Pull Requests, Epic:Text, Blocking:Text, Sprint:Iteration]
+                                       Linked Issues:Text, Epic:Text, Blocking:Text, Sprint:Iteration]
                                        "SRC:" Will not transfer this field
   -x=FIELD:PAT, --exclude=FIELD:PAT    Don't include issues with field values that match the pattern
                                        e.g. "Workspace:Private*", "Pipeline:Done".
@@ -41,7 +41,7 @@ Options:
   -h, --help                           Show this screen.
 
 For zenhub the following fields are available.
-- Estimate, Priority, Pipeline, PR, Epic, Blocking, Sprint, Position, Workspace
+- Estimate, Priority, Pipeline, Linked Issues, Epic, Blocking, Sprint, Position, Workspace
 
 For Projects the fields are customisable. However the following are special
 - Status: the column on the board
@@ -125,16 +125,16 @@ e.g.
 
 Issues that are blocking will remain unchaged.
 
-## Linked Pull Request
+## Linked Issues
 
-The default setting is ```-f="PR:Linked Pull Requests"```
+The default setting is ```-f="Linked Issues:Text"```
 
 Since zenhub has its own way to linking pull requests to issues this information is transfered by
 modifying the PR to add text which then will use githubs automatic PR linking
 
 e.g.
 ```
-fixes otherorg/otherepo#42
+- [ ] fixes otherorg/otherepo#42
 ```
 
 it won't do this for PR's in repos outside the org your project is in.

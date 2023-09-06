@@ -11,7 +11,7 @@ Options:
                                        CNV "Scale" (match by rank), Exact or Closest (default).
                                        One SRC can have many DST fields.
                                        [Default: Estimate:Size:Scale, Priority:Priority, Pipeline:Status,
-                                       PR:Linked Pull Requests, Epic:Text, Blocking:Text, Sprint:Iteration]
+                                       Linked Issues:Text, Epic:Text, Blocking:Text, Sprint:Iteration]
                                        "SRC:" Will not transfer this field
   -x=FIELD:PAT, --exclude=FIELD:PAT    Don't include issues with field values that match the pattern
                                        e.g. "Workspace:Private*", "Pipeline:Done".
@@ -43,7 +43,7 @@ default_mapping = [
     "Estimate:Size:Scale",
     "Priority:Priority",
     "Pipeline:Status",
-    "PR:Linked pull requests",
+    "Linked Issues:Text",
     "Epic:Text",
     "Blocked By:Text",
     "Sprint:Iteration",
@@ -62,20 +62,20 @@ def merge_workspaces(project_url, workspace, field, **args):
         transport=AIOHTTPTransport(
             url="https://api.zenhub.com/public/graphql",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=int(args['timeout']),
         ),
         fetch_schema_from_transport=True,
         serialize_variables=True,
+        execute_timeout=int(args['timeout']),
     ).execute
     token = os.environ["GITHUB_TOKEN"] if not args["github_token"] else args["github_token"]
     gh_query = Client(
         transport=AIOHTTPTransport(
             url="https://api.github.com/graphql",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=int(args['timeout']),
         ),
         fetch_schema_from_transport=False,
         serialize_variables=True,
+        execute_timeout=int(args['timeout']),
     ).execute
 
     org_name = project_url.split("orgs/")[1].split("/")[0]
@@ -214,9 +214,14 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
     statuses = {opt["name"]: opt for opt in fields["Pipeline"][0][0]["options"]}
 
     for pos, pipeline in enumerate(ws["pipelines"]):
+        # supposed to include prs also even if linked but doesn't seem to.
         issues = zh_query(
-            zh_issues, dict(pipelineId=pipeline["id"], filters={}, workspaceId=ws["id"])
+            zh_issues, dict(pipelineId=pipeline["id"], workspaceId=ws["id"])
         )["searchIssuesByPipeline"]["nodes"]
+        prs = zh_query(
+            zh_prs, dict(pipelineId=pipeline["id"], workspaceId=ws["id"])
+        )["searchIssuesByPipeline"]["nodes"]
+        prs = {pr['id']: pr for pr in prs}
 
         if any(fnmatch.fnmatch(pipeline["name"], drop_col) for drop_col in exclude["Pipeline"]):
             print(f"Excluding Pipeline '{ws['name']}/{pipeline['name']}'")
@@ -226,9 +231,10 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
         # for now we will just pick closest match
         status = fuzzy_get(statuses, pipeline["name"])
         print(f"Merging {ws['name']}/{pipeline['name']} -> {proj['title']}/{status['name']}")
-        for issue in issues:
+        for issue in issues + list(prs.values()):
             issue["Pipeline"] = pipeline["name"]
             changes = []
+            issue['connections'] = prs.get(issue['id'], {'connections': {}})['connections']
             key = issue_key(issue)
             if key in items:
                 item = items[key]
@@ -253,7 +259,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                 print(
                     f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP - don't add linked PRs"
                 )
-                continue
+                item = {}  # We still want to link it to the Issue and set non project stuff
             elif item is None:
                 # add issue if not there
                 item = gh_query(gh_add_item, dict(proj=proj["id"], issue=gh_issue["id"]))[
@@ -266,7 +272,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
             if key in seen:
                 print(f"- '{issue['repository']['name']}':'{issue['title']}' - SKIP - Added already")
                 continue
-            else:
+            elif item:
                 seen[key] = item
 
             # # TODO: can we reproduce the history?
@@ -280,7 +286,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                         value, options = last[status['id']]["id"] if last.get(status['id']) else None, []
                     else:
                         value, options = zh_value(ws, issue, src, epics, deps, zh_query)
-                    if field and field.get('name') == 'Position':
+                    if item and field and field.get('name') == 'Position':
                         # set order/position
                         # TODO: there is a way with less moves
                         if item.get("after", {}).get("id") == value and not last.get(status['id'], {}).get("_moved"):
@@ -303,11 +309,12 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                         # List of issues. Currently no support for multi-select fields
                         if field == TEXT:
                             text = ""
+                            fixes = "fixes " if src == 'Linked Issues' else ""
                             for sub in value:
-                                text += f"- [ ] {shorturl(sub['url'])}\n"
-                            res.append(add_text(gh_issue, src, text))
+                                text += f"- [ ] {fixes}{shorturl(sub['url'])}\n"
+                            res.append(add_text(gh_issue, src, text, proj))
                         elif field["name"] == "Linked pull requests":
-                            res.extend(update_linked_prs(item, gh_issue, field, value))
+                            res.extend(update_linked_prs(item, gh_issue, field, value, proj))
                         else:
                             # only other way to record this is by
                             # setting a field value on the linked item
@@ -318,6 +325,11 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                                         proj, sub, field, gh_issue["title"], gh_query, closest, options
                                     )
                                 )
+                    elif field == TEXT:
+                        text += f"- {value}\n"
+                        res.append(add_text(issue, src, text, proj))
+                    elif not item:
+                        pass
                     else:
                         # TODO: if it's a PR that ZH thinks is linked but github doesn't like the link (ie not PR to main). 
                         # Then maybe reset status to None so doesn't appear in the project?
@@ -406,12 +418,14 @@ def zh_value(ws, issue, name, epics, deps, zh_query):
     elif name == "Sprints":
         # Can't really set multiple iterations so just use latest
         return issue["sprints"]["nodes"][-1], []
-    elif name == "PR":
-        urls = zh_history_values(issue, "issue.connect_issue_to_pr", "issue.disconnect_issue_from_pr")
-        return [u for u in urls if "/oull/" in u], []
-    elif name == "Linked Issues":
-        urls = zh_history_values(issue, "issue.connect_issue_to_pr", "issue.disconnect_issue_from_pr")
-        return [u for u in urls if "/issue/" in u], []
+    # Reading the history turns out to be unreliable. Instead we will set this on the linked PRs.
+    # elif name == "PR":
+    #     urls = zh_history_values(issue, "issue.connect_issue_to_pr", "issue.disconnect_issue_from_pr")
+    #     return [u for u in urls if "/oull/" in u], []
+    elif name == "Linked Issues" and issue['pullRequest']:
+        # urls = zh_history_values(issue, "issue.connect_issue_to_pr", "issue.disconnect_issue_from_pr")
+        # Issue is a PR and links back to a ticket/issue
+        return [dict(url="https://github.com/{}/{}/issue/{}".format(*issue_key(linked))) for linked in issue["connections"]["nodes"]], []
     elif name == "Epic":
         if issue["id"] not in epics:
             return None, []
@@ -510,7 +524,7 @@ def set_field(proj, item, field, value, gh_query, match="closest", options=[]):
     return True
 
 
-def update_linked_prs(item, gh_issue, field, value):
+def update_linked_prs(item, gh_issue, field, value, proj):
     res = []
     # We can't set this directly. Only by modifying each PR text.
     # # TODO: there is special linked PR field but can't set it? https://github.com/orgs/community/discussions/40860
@@ -523,7 +537,7 @@ def update_linked_prs(item, gh_issue, field, value):
             pr["url"] == sub["url"] for pr in linked["nodes"]
         ):
             continue
-        if gh_issue["url"].split("/")[:4] != sub["url"].split("/")[:4]:
+        if not same_org(gh_issue, sub):
             # Let's skip modifying others PR's
             print(
                 f"- '{gh_issue['title']}' - SKIP PR update on '{sub['url']}'"
@@ -536,17 +550,38 @@ def update_linked_prs(item, gh_issue, field, value):
                 sub,
                 "Linked Issues",
                 f"- Fixes {shorturl(gh_issue['url'])}",
+                proj
             )
         )
     return res
     
 
-def add_text(gh_issue, name, text):
+def same_org(gh_issue, sub):
+    if "owner" in sub:
+        # It's a project
+        return sub['owner']['login'] == gh_issue['repository']['owner']['login']
+    else:
+        # another issue
+        return gh_issue["url"].split("/")[:4] == sub["url"].split("/")[:4]
+
+
+def add_text(gh_issue, name, text, proj):
+
     # Add the text in there and combine at the end
-    checklist = gh_issue.setdefault("_deps", {}).setdefault(name, [])
+    deps = gh_issue.setdefault("_deps", {})
+
+    if not same_org(gh_issue, proj):
+        # Remove or text if not same org
+        print(
+            f"- '{gh_issue['title']}' - SKIP TEXT update on '{gh_issue['url']} - different org'"
+        )
+        return False
+
+    checklist = deps.setdefault(name, [])
     if text not in checklist:
         # Some linked PR cna be duplicated
         checklist.append(text)
+        return True
 
 
 def set_text(gh_issue, gh_query, heading="Dependencies"):
@@ -561,7 +596,8 @@ def set_text(gh_issue, gh_query, heading="Dependencies"):
         rest = ""
     text = ""
     for title, lines in gh_issue.get("_deps", {}).items():
-        text += f"\n## {title}\n"
+        if lines:
+            text += f"\n## {title}\n"
         for line in lines:
             text += f"\n{line}"
     if text:
@@ -585,7 +621,7 @@ def issue_key(issue):
 
 
 def shorturl(url, base=None):
-    return url.replace("https://github.com/", "").replace("/issues/", "#").replace("/pull/", "#")
+    return url.replace("https://github.com/", "").replace("/issue/", "#").replace("/pull/", "#")
 
 
 zh_workspace = gql(
@@ -620,16 +656,17 @@ query RecentlyViewedWorkspaces {
 """
 )
 
-
+# Supposed to include PRs too but doesn't seem to? maybe only linked ones missing?
 zh_issues = gql(
     """
-query ($pipelineId: ID!, $filters: IssueSearchFiltersInput!, $workspaceId:ID!) {
-    searchIssuesByPipeline(pipelineId: $pipelineId, filters:$filters ) {
+query ($pipelineId: ID!, $workspaceId:ID!) {
+    searchIssuesByPipeline(pipelineId: $pipelineId, filters:{displayType: all} ) {
         nodes {
             id
             title
             ghId
             number
+            pullRequest
             pipelineIssue(workspaceId: $workspaceId) {
               priority {
                 id
@@ -638,13 +675,13 @@ query ($pipelineId: ID!, $filters: IssueSearchFiltersInput!, $workspaceId:ID!) {
               }
             }
             timelineItems(first: 50) {
-      nodes {
-        type: key
-        id
-        data
-        createdAt
-      }
-    }
+              nodes {
+                type: key
+                id
+                data
+                createdAt
+              }
+            }
             repository {
                 id
                 ghId
@@ -663,6 +700,67 @@ query ($pipelineId: ID!, $filters: IssueSearchFiltersInput!, $workspaceId:ID!) {
                     id
                     name
                 }
+            }
+        }
+    }
+}
+"""
+)
+
+zh_prs = gql(
+    """
+query ($pipelineId: ID!, $workspaceId:ID!) {
+    searchIssuesByPipeline(pipelineId: $pipelineId, filters:{displayType: prs} ) {
+        nodes {
+            id
+            title
+            ghId
+            number
+            pullRequest
+            pipelineIssue(workspaceId: $workspaceId) {
+              priority {
+                id
+                name
+                color
+              }
+            }
+            repository {
+                id
+                ghId
+                name
+                owner {
+                  id
+                  ghId
+                  login
+                }
+            }
+            estimate {
+                value
+            }
+            sprints(first: 10) {
+                nodes {
+                    id
+                    name
+                }
+            }
+            connections(first:20) {
+              nodes {
+                id
+                title
+                ghId
+                number
+                repository {
+                    id
+                    ghId
+                    name
+                    owner {
+                      id
+                      ghId
+                      login
+                    }
+                }
+              }
+            
             }
         }
     }

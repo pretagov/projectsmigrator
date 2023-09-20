@@ -112,7 +112,7 @@ def merge_workspaces(project_url, workspace, field, **args):
     for i in items:
         status = field_value(i, all_fields['Status'])
         col = board.setdefault(status, [])
-        i['after'] = col[-1] if col else {}
+        i['_board'] = (board, status)
         col.append(i)
     items = {issue_key(item["content"]): item for item in items}
 
@@ -159,7 +159,6 @@ def merge_workspaces(project_url, workspace, field, **args):
     for name in workspace:
         ws = fuzzy_get(workspaces, name)
         stats['added'] += sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_query, **args)
-
 
     # We need to set the body on any that we changed
     print("Save text changes")
@@ -267,6 +266,8 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                 ]["item"]
                 items[key] = item
                 item["content"] = gh_issue  # Don't need to get this again via the query
+                # Need to get the board from somewhere. TODO: switch board and last
+                item['_board'] = (next(iter(last.values()), dict(_board=([], None)))['_board'][0], status['id'])
                 changes += ["ADD*"]
                 added += 1
             if key in seen:
@@ -289,7 +290,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                     if item and field and field.get('name') == 'Position':
                         # set order/position
                         # TODO: there is a way with less moves
-                        if item.get("after", {}).get("id") == value and not last.get(status['id'], {}).get("_moved"):
+                        if is_after(item, value):
                             changes += []
                         else:
                             gh_query(
@@ -301,7 +302,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                                 ),
                             )
                             changes += ["POS*"] if value else ["TOP*"]
-                            item['_moved'] = True             
+                            cache_after(item, value)             
                     elif not value or not field:
                         # TODO: we should unset the field?
                         continue
@@ -337,8 +338,8 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                         res.append(set_field(proj, item, field, value, gh_query, closest, options))
                     if res:
                         changes += [f"{field.get('name', src)[:3].upper()}{'*' if any(res) else ''}"]
-
-            last[status['id']] = item
+            if item:
+                last[status['id']] = item
 
             print(f"- '{issue['repository']['name']}':'{issue['title']}' - {', '.join(changes)}")
     return added
@@ -489,6 +490,32 @@ def field_value(item, field):
         )
 
 
+def is_after(item, after):
+    board, status = item['_board']
+    col = board[status]
+    i = col.index(item)
+    i_after = next((pos for pos, i in enumerate(col) if i['id'] == after)) if after else -1
+    return i == i_after + 1
+
+
+def cache_after(item, after):
+    board, status = item['_board']
+    col = board[status]
+    col.remove(item)
+    i_after = next((pos for pos, i in enumerate(col) if i['id'] == after)) if after else -1
+    col.insert(i_after + 1, item)
+
+
+def cache_after_new(item, new_status):
+    # new status so append to bottom
+    board, status = item['_board']
+    col = board[status]
+    if item in col:
+        col.remove(item)
+    board[new_status].append(item)
+    item['_board'] = (board, new_status)
+
+
 field_stats = {}
 
 
@@ -521,6 +548,9 @@ def set_field(proj, item, field, value, gh_query, match="closest", options=[]):
             else gh_set_value
         )
         gh_query(query, dict(proj=proj["id"], item=item["id"], field=field["id"], value=value))
+        if field["name"] == 'Status':
+            # need to keep track of positin
+            cache_after_new(item, value)
     return True
 
 

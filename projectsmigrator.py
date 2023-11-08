@@ -111,9 +111,8 @@ def merge_workspaces(project_url, workspace, field, **args):
     board = {}
     for i in items:
         status = field_value(i, all_fields['Status'])
-        col = board.setdefault(status, [])
-        i['_board'] = (board, status)
-        col.append(i)
+        cache_init_board(i, board=board)
+        cache_after_new(i, status)
     items = {issue_key(item["content"]): item for item in items}
 
     # map excludes
@@ -267,7 +266,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                 items[key] = item
                 item["content"] = gh_issue  # Don't need to get this again via the query
                 # Need to get the board from somewhere. TODO: switch board and last
-                item['_board'] = (next(iter(last.values()), dict(_board=([], None)))['_board'][0], status['id'])
+                cache_init_board(item, next(iter(last.values()), None))
                 changes += ["ADD*"]
                 added += 1
             if key in seen:
@@ -290,7 +289,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
                     if item and field and field.get('name') == 'Position':
                         # set order/position
                         # TODO: there is a way with less moves
-                        if is_after(item, value):
+                        if cache_is_after(item, value):
                             changes += []
                         else:
                             gh_query(
@@ -490,7 +489,8 @@ def field_value(item, field):
         )
 
 
-def is_after(item, after):
+def cache_is_after(item, after):
+    """ True if the item is already after "after" in the target board """
     board, status = item['_board']
     col = board[status]
     i = col.index(item)
@@ -498,7 +498,14 @@ def is_after(item, after):
     return i == i_after + 1
 
 
+def cache_init_board(new_item, item=None, board={}):
+    """" set the shared board state on the item. Set status to None ready to put onto the cached board """
+    board, _ = item['_board'] if item is not None else (board, None)
+    new_item['_board'] = (board, None)  # actual location will be set later
+
+
 def cache_after(item, after):
+    """ move item to after "after" in the target board cache """
     board, status = item['_board']
     col = board[status]
     col.remove(item)
@@ -507,12 +514,12 @@ def cache_after(item, after):
 
 
 def cache_after_new(item, new_status):
-    # new status so append to bottom
+    """ put item at the bottom of the new_status col on the cached target board """
     board, status = item['_board']
-    col = board[status]
-    if item in col:
-        col.remove(item)
-    board[new_status].append(item)
+    old_col = board.get(status, [])
+    if item in old_col:
+        old_col.remove(item)
+    board.setdefault(new_status, []).append(item)
     item['_board'] = (board, new_status)
 
 

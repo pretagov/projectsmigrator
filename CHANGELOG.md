@@ -1,6 +1,6 @@
 # Change Log
 
-## [0.0.2] -  Unreleased
+## [0.0.2] -  2023-11-13
 
 ### Fixed
 - tracking board locations failing when item added a status with nothing in it yet [djay]

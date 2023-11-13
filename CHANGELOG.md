@@ -4,6 +4,8 @@
 
 ### Fixed
 - tracking board locations failing when item added a status with nothing in it yet [djay]
+- fix hardcoded org [conbrad]
+- fix bug if no exclude pipeline [conbrad]
 
 ## [0.0.1] - 2023-07-22
 

@@ -221,7 +221,7 @@ def sync_workspace(ws, proj, fields, items, exclude, seen, last, zh_query, gh_qu
         )["searchIssuesByPipeline"]["nodes"]
         prs = {pr['id']: pr for pr in prs}
 
-        if any(fnmatch.fnmatch(pipeline["name"], drop_col) for drop_col in exclude["Pipeline"]):
+        if any(fnmatch.fnmatch(pipeline["name"], drop_col) for drop_col in exclude.get("Pipeline", [])):
             print(f"Excluding Pipeline '{ws['name']}/{pipeline['name']}'")
             continue
 

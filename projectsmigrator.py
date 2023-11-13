@@ -97,7 +97,7 @@ def merge_workspaces(project_url, workspace, field, **args):
     cursor = None
     print("Reading Project", end="")
     while True:
-        res = gh_query(gh_proj_items, dict(login="pretagov", number=int(proj_num), cursor=cursor))[
+        res = gh_query(gh_proj_items, dict(login=org_name, number=int(proj_num), cursor=cursor))[
             "organization"
         ]["projectV2"]["items"]
         items.extend(res["nodes"])
